@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SnapFlick - bucket S3 y tabla de jobs
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Nombre global unico para el bucket
+
+Resources:
+  CatalogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ["*"]
+            ExposedHeaders: [ETag]
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 30
+
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: snapflick-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+Outputs:
+  BucketArn:
+    Value: !GetAtt CatalogBucket.Arn
+  TableName:
+    Value: !Ref JobsTable

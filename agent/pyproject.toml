@@ -1,0 +1,43 @@
+[project]
+name = "snapflick"
+version = "0.1.0"
+description = "Agente que convierte fotos de productos en un catálogo publicable"
+requires-python = ">=3.11"
+dependencies = [
+  "strands-agents>=1.0.0",
+  "boto3>=1.35.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "python-multipart>=0.0.12",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.5.0",
+  "pillow>=10.4.0",
+  "rembg[cpu]>=2.0.59",
+  "onnxruntime>=1.19.0",
+  "jinja2>=3.1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0", "ruff>=0.7.0", "httpx>=0.27.0"]
+
+[project.scripts]
+snapflick = "snapflick.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snapflick"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Selección explícita en vez de confiar en el default de ruff: el default ha
+# ido creciendo entre versiones (bugbear, flake8-async, etc.) y no queremos que
+# una actualización de ruff rompa el CI sin que nadie haya cambiado una línea
+# de código. E/F/I/UP cubren errores reales, imports desordenados y sintaxis
+# obsoleta sin ser tan opinionados como B/BLE/ASYNC.
+select = ["E", "F", "I", "UP"]

@@ -1,0 +1,26 @@
+flowchart TB
+    U[Usuario: fotos de productos] --> FE[Frontend Next.js<br/>AWS Amplify Hosting]
+    BG[Fondo de marca guardado] --> FE
+    FE -->|HTTPS| API[FastAPI /jobs /catalog /ping<br/>contenedor ARM64 :8080]
+    API --> S3[(Amazon S3<br/>originales · procesadas · catálogos)]
+    API --> ORC{{Orchestrator<br/>Strands Agents SDK}}
+
+    ORC --> IT[image_tools<br/>rembg + Pillow<br/>quitar fondo · recortar · componer]
+    ORC --> VA[VisionAgent<br/>Amazon Bedrock multimodal<br/>salida estructurada]
+    ORC --> CA[CatalogAgent<br/>categorización del lote]
+    ORC --> CT[catalog_tools<br/>Jinja2 → HTML / JSON / PDF]
+
+    IT --> S3
+    VA --> DB[(DynamoDB / SQLite<br/>fichas de producto)]
+    CA --> DB
+    CT --> S3
+    S3 --> FE
+
+    subgraph RT[Amazon Bedrock AgentCore Runtime · plan B: AWS App Runner]
+        API
+        ORC
+        IT
+        VA
+        CA
+        CT
+    end

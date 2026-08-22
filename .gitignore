@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+data/
+samples/output/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+out/
+.DS_Store
+.bedrock_agentcore.yaml

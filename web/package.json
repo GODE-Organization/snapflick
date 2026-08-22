@@ -1,0 +1,11 @@
+{
+  "name": "snapflick-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend Next.js de SnapFlick. Placeholder hasta que se inicialice el proyecto real (ver README.md de esta carpeta) — existe para que AWS Amplify Hosting pueda detectar el monorepo sin fallar.",
+  "scripts": {
+    "dev": "echo 'Todavia no se ha inicializado el proyecto Next.js. Ver web/README.md' && exit 1",
+    "build": "echo 'Todavia no se ha inicializado el proyecto Next.js. Ver web/README.md' && exit 1",
+    "start": "echo 'Todavia no se ha inicializado el proyecto Next.js. Ver web/README.md' && exit 1"
+  }
+}

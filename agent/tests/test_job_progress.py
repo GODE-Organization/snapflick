@@ -1,0 +1,100 @@
+"""Regresión del hallazgo #1 de docs/03-revision-tecnica.md: el progreso del job debe
+verse mientras el lote se procesa, no solo al final.
+
+Se reemplazan las herramientas de imagen y los agentes por dobles rápidos
+(nada de rembg ni Bedrock) para poder aislar exactamente el comportamiento que
+se rompía: `JOBS[job_id]` tiene que ser el mismo objeto que `run_job` va
+mutando, así que `processed_images` avanza de verdad mientras corre el lote.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import snapflick.main as main_module
+import snapflick.pipeline as pipeline_module
+from snapflick.models.schemas import CatalogPlan, CategoryAssignment, Job, JobStatus, ProductSheet
+
+
+def _fake_extract_product_sheet(path, agent=None):
+    return ProductSheet(name="Producto de prueba", description="Descripción de prueba.")
+
+
+def _fake_plan_catalog(products, agent=None):
+    return CatalogPlan(
+        categories=["Otros"],
+        assignments=[
+            CategoryAssignment(product_id=p.id, category="Otros", reason="prueba") for p in products
+        ],
+        catalog_title="Catálogo de prueba",
+        catalog_summary="Resumen de prueba.",
+    )
+
+
+def _fake_remove_background(image_path: str, output_path: str) -> str:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"fake-png")
+    return output_path
+
+
+def _fake_compose_on_background(cutout_path, background_path, output_path) -> str:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"fake-jpg")
+    return output_path
+
+
+def _fake_make_thumbnail(image_path, output_path) -> str:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"fake-thumb")
+    return output_path
+
+
+def test_run_job_muta_el_mismo_objeto_que_recibe(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "remove_background", _fake_remove_background)
+    monkeypatch.setattr(pipeline_module, "compose_on_background", _fake_compose_on_background)
+    monkeypatch.setattr(pipeline_module, "make_thumbnail", _fake_make_thumbnail)
+    monkeypatch.setattr(pipeline_module, "extract_product_sheet", _fake_extract_product_sheet)
+    monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
+    monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+
+    job = Job(id="job-progress", total_images=3)
+    image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(3)]
+    for p in image_paths:
+        Path(p).write_bytes(b"fake-source")
+
+    result = pipeline_module.run_job(job, image_paths, workdir=tmp_path)
+
+    assert result is job, "run_job debe mutar y devolver el mismo objeto que recibió"
+    assert job.processed_images == 3
+    assert job.status == JobStatus.DONE
+    assert len(job.products) == 3
+
+
+def test_process_actualiza_el_job_que_vive_en_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "remove_background", _fake_remove_background)
+    monkeypatch.setattr(pipeline_module, "compose_on_background", _fake_compose_on_background)
+    monkeypatch.setattr(pipeline_module, "make_thumbnail", _fake_make_thumbnail)
+    monkeypatch.setattr(pipeline_module, "extract_product_sheet", _fake_extract_product_sheet)
+    monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
+    monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
+
+    job_id = "job-abc"
+    job = Job(id=job_id, total_images=2)
+    main_module.JOBS[job_id] = job
+
+    image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(2)]
+    for p in image_paths:
+        Path(p).write_bytes(b"fake-source")
+
+    main_module._process(job_id, image_paths, None)
+
+    # esta es exactamente la regresión: JOBS[job_id] tiene que reflejar el
+    # avance real, no seguir siendo el objeto "pending" original sin tocar.
+    assert main_module.JOBS[job_id] is job
+    assert main_module.JOBS[job_id].processed_images == 2
+    assert main_module.JOBS[job_id].status == JobStatus.DONE
+
+    del main_module.JOBS[job_id]
