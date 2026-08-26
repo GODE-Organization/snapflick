@@ -4,6 +4,8 @@ __pycache__/
 venv/
 .env
 data/
+samples/input/
+samples/backgrounds/
 samples/output/
 *.egg-info/
 dist/
