@@ -10,9 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from strands import Agent
-from strands.models import BedrockModel
 
-from ..config import settings
+from ..model_provider import build_model
 from ..models.schemas import ProductSheet
 
 SYSTEM_PROMPT = """Eres un catalogador experto de productos de retail.
@@ -35,10 +34,7 @@ Reglas estrictas:
 
 
 def build_vision_agent() -> Agent:
-    return Agent(
-        model=BedrockModel(model_id=settings.bedrock_model_id, region_name=settings.aws_region),
-        system_prompt=SYSTEM_PROMPT,
-    )
+    return Agent(model=build_model(), system_prompt=SYSTEM_PROMPT)
 
 
 def extract_product_sheet(image_path: str, agent: Agent | None = None) -> ProductSheet:

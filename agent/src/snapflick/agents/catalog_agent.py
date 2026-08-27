@@ -7,9 +7,8 @@ como tres categorías distintas. Categorizar el lote completo evita eso.
 from __future__ import annotations
 
 from strands import Agent
-from strands.models import BedrockModel
 
-from ..config import settings
+from ..model_provider import build_model
 from ..models.schemas import CatalogPlan, ProductRecord
 
 SEED_TAXONOMY = [
@@ -42,10 +41,7 @@ Reglas:
 
 
 def build_catalog_agent() -> Agent:
-    return Agent(
-        model=BedrockModel(model_id=settings.bedrock_model_id, region_name=settings.aws_region),
-        system_prompt=SYSTEM_PROMPT,
-    )
+    return Agent(model=build_model(), system_prompt=SYSTEM_PROMPT)
 
 
 def plan_catalog(products: list[ProductRecord], agent: Agent | None = None) -> CatalogPlan:
