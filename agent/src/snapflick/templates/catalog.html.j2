@@ -5,55 +5,230 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
 <style>
-  :root { --ink:#1a1a1a; --muted:#6b6b6b; --line:#e6e6e6; --bg:#fafafa; }
+  /*
+    Paleta y tipografía tomadas del design system "Lumina AI" (Stitch) de SnapFlick.
+    Sin Tailwind CDN, sin Google Fonts ni iconos remotos a propósito: este archivo
+    tiene que abrir con doble clic y verse igual sin conexión (ver
+    docs/03-revision-tecnica.md, hallazgo #2) — todo lo visual vive en este <style>,
+    con pilas de fuentes de sistema como respaldo de Inter / JetBrains Mono.
+  */
+  :root {
+    --bg: #f7f9ff;
+    --surface: #ffffff;
+    --surface-muted: #eaeef5;
+    --surface-variant: #dee3e9;
+    --ink: #171c21;
+    --ink-muted: #464554;
+    --outline: #c7c4d7;
+    --primary: #4648d4;
+    --accent: #6366f1;
+    --accent-soft: rgba(99, 102, 241, .1);
+    --cyan: #22d3ee;
+    --warn: #8a6d00;
+    --warn-bg: #fff6d6;
+    --radius-card: 1.5rem;
+    --radius-chip: .5rem;
+    --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { padding:56px 24px 32px; max-width:1100px; margin:0 auto; }
-  h1 { font-size:2.1rem; margin:0 0 8px; letter-spacing:-.02em; }
-  header p { color:var(--muted); margin:0; max-width:60ch; }
-  main { max-width:1100px; margin:0 auto; padding:0 24px 72px; }
-  h2 { font-size:1.05rem; text-transform:uppercase; letter-spacing:.08em;
-       color:var(--muted); margin:48px 0 16px; padding-bottom:8px; border-bottom:1px solid var(--line); }
-  .grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); }
-  .card { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; background:#f0f0f0; }
-  .body { padding:14px 16px 18px; }
-  .brand { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
-  .name { font-weight:600; margin:2px 0 4px; }
-  .pres { font-size:.85rem; color:var(--muted); }
-  .desc { font-size:.88rem; margin:10px 0 0; }
-  .low { display:inline-block; margin-top:10px; font-size:.72rem; color:#8a6d00;
-         background:#fff6d6; border-radius:999px; padding:2px 8px; }
-  footer { text-align:center; color:var(--muted); font-size:.85rem; padding:32px 0 64px; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px clamp(20px, 4vw, 40px);
+    background: rgba(255, 255, 255, .82); backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--surface-variant);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .mark {
+    width: 32px; height: 32px; border-radius: .65rem; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    box-shadow: 0 6px 16px -4px rgba(99, 102, 241, .45);
+  }
+  .brand .word { font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
+  .topbar .credit {
+    font: 500 12px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .hero {
+    position: relative; overflow: hidden;
+    background: var(--surface-muted);
+    padding: clamp(28px, 3vw, 44px) clamp(20px, 4vw, 40px) 28px;
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(60% 50% at 85% 0%, rgba(34, 211, 238, .12), transparent 70%),
+                radial-gradient(50% 40% at 0% 100%, rgba(99, 102, 241, .12), transparent 70%);
+  }
+  .hero-inner { position: relative; max-width: 1280px; margin: 0 auto; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 12px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--primary); background: var(--accent-soft);
+    padding: 7px 14px; border-radius: 999px; margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 3.2vw, 2.75rem); line-height: 1.12; letter-spacing: -.02em;
+    margin: 0 0 10px; font-weight: 700; max-width: 46ch;
+  }
+  .summary { color: var(--ink-muted); font-size: 1.05rem; line-height: 1.6; margin: 0 0 14px; max-width: 62ch; }
+  .meta-line { font: 500 13px/1 var(--font-mono); color: var(--ink-muted); letter-spacing: .01em; }
+  .meta-line b { color: var(--ink); font-weight: 600; }
+
+  .cat-nav {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px;
+  }
+  .cat-nav a {
+    text-decoration: none;
+    font: 600 13px/1 var(--font-sans);
+    padding: 10px 18px; border-radius: 999px;
+    background: var(--surface); color: var(--ink-muted);
+    border: 1px solid var(--surface-variant);
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .cat-nav a:hover { color: var(--primary); border-color: var(--accent); background: var(--accent-soft); }
+
+  main { max-width: 1280px; margin: 0 auto; padding: 8px clamp(20px, 4vw, 40px) 24px; }
+
+  .category { padding: 40px 0 8px; scroll-margin-top: 84px; }
+  .category h2 {
+    display: flex; align-items: baseline; gap: 10px;
+    font-size: 1.3rem; font-weight: 700; letter-spacing: -.01em; margin: 0 0 20px;
+  }
+  .category h2 .count {
+    font: 600 12px/1 var(--font-mono); color: var(--ink-muted);
+    background: var(--surface-muted); padding: 5px 10px; border-radius: 999px;
+  }
+
+  /* min() acota el ancho de columna a 320px: con auto-fit, una categoría con un solo
+     producto no debe estirar la tarjeta a todo el ancho del contenedor. */
+  .grid { display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(250px, min(320px, 100%))); }
+
+  .card {
+    display: flex; flex-direction: column;
+    background: var(--surface); border-radius: var(--radius-card); overflow: hidden;
+    border: 1px solid var(--surface-variant);
+    box-shadow: 0 1px 2px rgba(23, 28, 33, .04);
+    transition: box-shadow .25s ease, transform .25s ease, border-color .25s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: transparent;
+    box-shadow: 0 20px 35px -12px rgba(99, 102, 241, .22);
+  }
+  .card .media { position: relative; aspect-ratio: 4 / 5; background: var(--surface-variant); }
+  .card .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .flag {
+    position: absolute; top: 12px; left: 12px;
+    font: 600 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .05em;
+    color: var(--warn); background: var(--warn-bg);
+    padding: 6px 10px; border-radius: var(--radius-chip);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .08);
+  }
+  .card .body { padding: 20px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .card .brand-line {
+    font: 600 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ink-muted);
+  }
+  .card .name { font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+  .card .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .card .tag {
+    font: 600 11px/1 var(--font-sans); padding: 5px 9px; border-radius: var(--radius-chip);
+  }
+  .card .tag.cat { color: var(--primary); background: var(--accent-soft); }
+  .card .tag.pres { color: var(--ink-muted); background: var(--surface-muted); }
+  .card .desc { font-size: .9rem; line-height: 1.55; color: var(--ink-muted); margin: 0; }
+  .card .keywords { margin-top: auto; padding-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .card .keywords span {
+    font: 500 10.5px/1 var(--font-mono); color: var(--ink-muted);
+    border: 1px solid var(--surface-variant); border-radius: 999px; padding: 4px 8px;
+  }
+
+  footer {
+    max-width: 1280px; margin: 24px auto 0; padding: 28px clamp(20px, 4vw, 40px) 56px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    border-top: 1px solid var(--surface-variant);
+    font: 500 12.5px/1 var(--font-sans); color: var(--ink-muted);
+  }
+  footer .fmark { display: flex; align-items: center; gap: 6px; }
+  footer .fmark .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>{{ title }}</h1>
-  <p>{{ summary }}</p>
-</header>
+<div class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="word">{{ brand_name | default("SnapFlick") }}</span>
+  </div>
+  <span class="credit">Catálogo generado con IA</span>
+</div>
+
+<div class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">Catálogo público</span>
+    <h1>{{ title }}</h1>
+    <p class="summary">{{ summary }}</p>
+    <p class="meta-line"><b>{{ total }}</b> producto{{ "s" if total != 1 else "" }} · <b>{{ grouped|length }}</b> categoría{{ "s" if grouped|length != 1 else "" }}</p>
+    {% if grouped|length > 1 %}
+    <nav class="cat-nav">
+      {% for category, products in grouped.items() %}
+        {% if products %}<a href="#cat-{{ loop.index }}">{{ category }} ({{ products|length }})</a>{% endif %}
+      {% endfor %}
+    </nav>
+    {% endif %}
+  </div>
+</div>
+
 <main>
 {% for category, products in grouped.items() %}
   {% if products %}
-  <h2>{{ category }} <span style="font-weight:400">({{ products|length }})</span></h2>
-  <div class="grid">
-    {% for p in products %}
-    <article class="card">
-      <img src="{{ image_srcs[p.id] }}" alt="{{ p.sheet.name }}">
-      <div class="body">
-        {% if p.sheet.brand %}<div class="brand">{{ p.sheet.brand }}</div>{% endif %}
-        <div class="name">{{ p.sheet.name }}</div>
-        {% if p.sheet.presentation %}<div class="pres">{{ p.sheet.presentation }}</div>{% endif %}
-        <p class="desc">{{ p.sheet.description }}</p>
-        {% if p.sheet.confidence == 'low' %}<span class="low">Revisar datos</span>{% endif %}
-      </div>
-    </article>
-    {% endfor %}
-  </div>
+  <section class="category" id="cat-{{ loop.index }}">
+    <h2>{{ category }} <span class="count">{{ products|length }}</span></h2>
+    <div class="grid">
+      {% for p in products %}
+      <article class="card">
+        <div class="media">
+          <img src="{{ image_srcs[p.id] }}" alt="{{ p.sheet.name }}">
+          {% if p.sheet.confidence == 'low' %}<span class="flag">Revisar datos</span>{% endif %}
+        </div>
+        <div class="body">
+          {% if p.sheet.brand %}<div class="brand-line">{{ p.sheet.brand }}</div>{% endif %}
+          <h3 class="name">{{ p.sheet.name }}</h3>
+          {% if p.sheet.category or p.sheet.presentation %}
+          <div class="tags">
+            {% if p.sheet.category %}<span class="tag cat">{{ p.sheet.category }}</span>{% endif %}
+            {% if p.sheet.presentation %}<span class="tag pres">{{ p.sheet.presentation }}</span>{% endif %}
+          </div>
+          {% endif %}
+          <p class="desc">{{ p.sheet.description }}</p>
+          {% if p.sheet.keywords %}
+          <div class="keywords">
+            {% for kw in p.sheet.keywords[:4] %}<span>{{ kw }}</span>{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
   {% endif %}
 {% endfor %}
 </main>
-<footer>{{ total }} productos · generado con SnapFlick</footer>
+
+<footer>
+  <span>{{ total }} productos · generado con {{ brand_name | default("SnapFlick") }}</span>
+  <span class="fmark"><span class="dot" aria-hidden="true"></span> Fotos, recorte y ficha generados con IA</span>
+</footer>
 </body>
 </html>
