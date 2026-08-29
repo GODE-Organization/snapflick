@@ -36,15 +36,22 @@ def _image_data_uri(path: str | None) -> str:
 
 
 def render_catalog_html(job: Job, output_path: str, embed_images: bool = True) -> str:
-    """Agrupa los productos por categoría y escribe el catálogo HTML."""
+    """Agrupa los productos visibles por categoría y escribe el catálogo HTML.
+
+    Los productos con `visible=False` se ocultan del catálogo publicado (esta
+    función) sin borrarlos del job — siguen viéndose en las vistas de
+    administrador, que leen `job.products` directamente vía la API.
+    """
     assert job.plan, "El job necesita un CatalogPlan antes de renderizar"
-    by_id = {p.id: p for p in job.products}
+    visible = {p.id: p for p in job.products if p.visible}
     grouped: dict[str, list] = {c: [] for c in job.plan.categories}
     for a in job.plan.assignments:
-        grouped.setdefault(a.category, []).append(by_id[a.product_id])
+        product = visible.get(a.product_id)
+        if product is not None:
+            grouped.setdefault(a.category, []).append(product)
 
     image_srcs = {}
-    for p in job.products:
+    for p in visible.values():
         path = p.image.composed_path or p.image.source_path
         image_srcs[p.id] = _image_data_uri(path) if embed_images else path
 
@@ -55,7 +62,7 @@ def render_catalog_html(job: Job, output_path: str, embed_images: bool = True) -
             title=job.plan.catalog_title,
             summary=job.plan.catalog_summary,
             grouped=grouped,
-            total=len(job.products),
+            total=len(visible),
             image_srcs=image_srcs,
         )
     )
@@ -65,8 +72,9 @@ def render_catalog_html(job: Job, output_path: str, embed_images: bool = True) -
 
 
 def export_catalog_json(job: Job, output_path: str) -> str:
+    """Exporta el job a JSON, igual que `render_catalog_html`, sin los productos ocultos."""
+    data = job.model_dump(mode="json")
+    data["products"] = [p for p in data["products"] if p["visible"]]
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(output_path).write_text(
-        json.dumps(job.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    Path(output_path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path

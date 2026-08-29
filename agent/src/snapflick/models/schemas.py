@@ -54,6 +54,10 @@ class ProductRecord(BaseModel):
     id: str
     sheet: ProductSheet
     image: ProcessedImage
+    visible: bool = Field(
+        default=True,
+        description="Si es False, el producto se oculta del catálogo publicado sin borrarlo.",
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

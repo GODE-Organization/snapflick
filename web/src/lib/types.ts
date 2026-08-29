@@ -33,6 +33,7 @@ export interface ProductRecord {
   id: string;
   sheet: ProductSheet;
   image: ProcessedImage;
+  visible: boolean;
   created_at: string;
 }
 

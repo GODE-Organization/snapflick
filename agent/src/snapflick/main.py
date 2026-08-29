@@ -312,13 +312,47 @@ def get_job(job_id: str) -> dict:
     return job_to_public_dict(JOBS[job_id])
 
 
-class ProductSheetUpdate(BaseModel):
+class CatalogMetaUpdate(BaseModel):
+    """Metadatos del catálogo editables desde la vista de catálogo publicado."""
+
+    catalog_title: str | None = None
+    catalog_summary: str | None = None
+
+
+@app.patch("/jobs/{job_id}", response_model=Job)
+def update_catalog_meta(job_id: str, payload: CatalogMetaUpdate) -> dict:
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+    if not job.plan:
+        raise HTTPException(400, "El catálogo todavía no tiene un plan generado")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(job.plan, field, value)
+
+    if job.catalog_html_path:
+        out_dir = Path(job.catalog_html_path).parent
+        job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
+        export_catalog_json(job, str(out_dir / "catalogo.json"))
+        _sync_job_to_storage(job)
+
+    STORE.save(job)
+    _notify_change(job_id)
+    return job_to_public_dict(job)
+
+
+class ProductUpdate(BaseModel):
     """Campos editables por el usuario en la vista de revisión.
 
     Todos opcionales: el frontend solo envía los campos que el usuario tocó.
     `confidence`, `ingredients` y `language_detected` no se exponen porque la
     revisión humana los vuelve irrelevantes: una vez que una persona confirma
     o corrige el dato, ya no hace falta que la ficha "confíe" en la extracción.
+
+    `visible` no es un campo de `ProductSheet` (no es un dato extraído del
+    empaque) sino de `ProductRecord` — se maneja aparte del resto antes de
+    aplicar el resto de los campos sobre `record.sheet`.
     """
 
     name: str | None = None
@@ -329,10 +363,11 @@ class ProductSheetUpdate(BaseModel):
     keywords: list[str] | None = None
     barcode: str | None = None
     notes: str | None = None
+    visible: bool | None = None
 
 
 @app.patch("/jobs/{job_id}/products/{product_id}", response_model=Job)
-def update_product(job_id: str, product_id: str, payload: ProductSheetUpdate) -> dict:
+def update_product(job_id: str, product_id: str, payload: ProductUpdate) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
@@ -341,6 +376,9 @@ def update_product(job_id: str, product_id: str, payload: ProductSheetUpdate) ->
         raise HTTPException(404, "Producto no encontrado")
 
     updates = payload.model_dump(exclude_unset=True)
+    visible = updates.pop("visible", None)
+    if visible is not None:
+        record.visible = visible
     for field, value in updates.items():
         setattr(record.sheet, field, value)
 
@@ -356,6 +394,7 @@ def update_product(job_id: str, product_id: str, payload: ProductSheetUpdate) ->
         out_dir = Path(job.catalog_html_path).parent
         job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
         export_catalog_json(job, str(out_dir / "catalogo.json"))
+        _sync_job_to_storage(job)
 
     STORE.save(job)
     _notify_change(job_id)

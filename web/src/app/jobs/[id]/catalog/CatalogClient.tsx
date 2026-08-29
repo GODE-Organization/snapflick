@@ -4,17 +4,21 @@ import { useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { Icon } from "@/components/Icon";
-import { ProductDetailModal } from "@/components/ProductDetailModal";
-import { absoluteUrl } from "@/lib/api";
+import { ProductEditModal } from "@/components/ProductEditModal";
+import { absoluteUrl, updateCatalog, updateProduct } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
 import type { ProductRecord } from "@/lib/types";
 
 export function CatalogClient({ jobId }: { jobId: string }) {
-  const { data: job, error } = useJob(jobId);
+  const { data: job, error, mutate } = useJob(jobId);
   const [selected, setSelected] = useState<ProductRecord | null>(null);
   const [copied, setCopied] = useState(false);
   const [preview, setPreview] = useState<"desktop" | "mobile">("desktop");
   const [activeCategory, setActiveCategory] = useState<string>("Todos");
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [savingMeta, setSavingMeta] = useState(false);
 
   if (error) {
     return (
@@ -51,7 +55,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const categories = job.plan?.categories ?? [
     ...new Set(job.products.map((p) => p.sheet.category ?? "Sin categoría")),
   ];
-  const visible =
+  const filteredProducts =
     activeCategory === "Todos"
       ? job.products
       : job.products.filter((p) => (p.sheet.category ?? "Sin categoría") === activeCategory);
@@ -61,6 +65,38 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     await navigator.clipboard.writeText(publicUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function startEditingMeta() {
+    if (!job) return;
+    setTitleDraft(job.plan?.catalog_title ?? "");
+    setSummaryDraft(job.plan?.catalog_summary ?? "");
+    setEditingMeta(true);
+  }
+
+  async function saveMeta() {
+    const title = titleDraft.trim();
+    const summary = summaryDraft.trim();
+    if (!job || !title) return;
+    const patch: { catalog_title?: string; catalog_summary?: string } = {};
+    if (title !== job.plan?.catalog_title) patch.catalog_title = title;
+    if (summary !== job.plan?.catalog_summary) patch.catalog_summary = summary;
+    if (Object.keys(patch).length === 0) {
+      setEditingMeta(false);
+      return;
+    }
+    setSavingMeta(true);
+    try {
+      mutate(await updateCatalog(jobId, patch));
+      setEditingMeta(false);
+    } finally {
+      setSavingMeta(false);
+    }
+  }
+
+  async function toggleVisibility(product: ProductRecord) {
+    const updated = await updateProduct(jobId, product.id, { visible: !product.visible });
+    mutate(updated);
   }
 
   return (
@@ -78,11 +114,67 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   {job.products.length} productos
                 </span>
               </div>
-              <h1 className="text-display-lg font-bold text-on-background">
-                {job.plan?.catalog_title ?? "Catálogo"}
-              </h1>
-              {job.plan?.catalog_summary && (
-                <p className="text-body-lg text-on-surface-variant">{job.plan.catalog_summary}</p>
+              {editingMeta ? (
+                <div className="space-y-3 rounded-xl border border-primary/40 bg-surface-container-lowest p-4">
+                  <div className="space-y-2">
+                    <label className="font-mono text-label-sm uppercase tracking-wider text-on-surface-variant">
+                      Nombre del catálogo
+                    </label>
+                    <input
+                      autoFocus
+                      value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-headline-lg font-bold text-on-background outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="font-mono text-label-sm uppercase tracking-wider text-on-surface-variant">
+                      Descripción
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={summaryDraft}
+                      onChange={(e) => setSummaryDraft(e.target.value)}
+                      placeholder="Agregar descripción del catálogo…"
+                      className="w-full resize-none rounded-lg border border-outline-variant bg-surface px-3 py-2 text-body-lg text-on-background outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => setEditingMeta(false)}
+                      disabled={savingMeta}
+                      className="rounded-full border border-outline-variant px-5 py-2 font-mono text-label-md text-on-surface transition-colors hover:bg-surface-container-high disabled:opacity-40"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={saveMeta}
+                      disabled={savingMeta || !titleDraft.trim()}
+                      className="flex items-center gap-2 rounded-full bg-primary px-5 py-2 font-mono text-label-md text-on-primary shadow-md disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Icon name="save" className="text-[18px]" />
+                      {savingMeta ? "Guardando…" : "Guardar"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-3">
+                  <div>
+                    <h1 className="text-display-lg font-bold text-on-background">
+                      {job.plan?.catalog_title ?? "Catálogo"}
+                    </h1>
+                    {job.plan?.catalog_summary && (
+                      <p className="text-body-lg text-on-surface-variant">{job.plan.catalog_summary}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={startEditingMeta}
+                    className="mt-2 flex shrink-0 items-center gap-2 rounded-full border border-outline-variant px-4 py-2 font-mono text-label-sm text-on-surface transition-colors hover:bg-surface-container-high"
+                  >
+                    <Icon name="edit" className="text-[16px]" />
+                    Editar
+                  </button>
+                </div>
               )}
             </div>
             {publicUrl && (
@@ -219,13 +311,18 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                 </nav>
 
                 <div className={`grid gap-6 ${preview === "mobile" ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"}`}>
-                  {visible.map((p) => {
+                  {filteredProducts.map((p) => {
                     const thumb = absoluteUrl(p.image.thumbnail_path ?? p.image.composed_path);
                     return (
-                      <button
+                      <div
                         key={p.id}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setSelected(p)}
-                        className="group relative overflow-hidden rounded-2xl bg-surface text-left transition-all hover:-translate-y-1 hover:shadow-xl"
+                        onKeyDown={(e) => e.key === "Enter" && setSelected(p)}
+                        className={`group relative overflow-hidden rounded-2xl bg-surface text-left transition-all hover:-translate-y-1 hover:shadow-xl ${
+                          p.visible ? "" : "opacity-50"
+                        }`}
                       >
                         <div className="relative aspect-square overflow-hidden bg-surface-variant">
                           {thumb && (
@@ -233,6 +330,22 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                             <img src={thumb} alt={p.sheet.name} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
                           )}
                           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                          {!p.visible && (
+                            <span className="absolute left-3 top-3 flex items-center gap-1 rounded-full bg-inverse-surface/80 px-2.5 py-1 font-mono text-label-sm text-inverse-on-surface">
+                              <Icon name="visibility_off" className="text-[16px]" />
+                              Oculto
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void toggleVisibility(p);
+                            }}
+                            title={p.visible ? "Ocultar del catálogo" : "Mostrar en el catálogo"}
+                            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-surface/90 text-on-surface shadow-sm backdrop-blur-md transition-colors hover:bg-surface"
+                          >
+                            <Icon name={p.visible ? "visibility" : "visibility_off"} className="text-[18px]" />
+                          </button>
                         </div>
                         <div className="p-5">
                           <div className="mb-2 flex items-start justify-between gap-2">
@@ -245,7 +358,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                           )}
                           <p className="line-clamp-2 text-body-md text-on-surface-variant">{p.sheet.description}</p>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -255,7 +368,17 @@ export function CatalogClient({ jobId }: { jobId: string }) {
         </div>
       </div>
 
-      {selected && <ProductDetailModal product={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ProductEditModal
+          jobId={jobId}
+          product={selected}
+          onSaved={(updated) => {
+            mutate(updated);
+            setSelected(updated.products.find((p) => p.id === selected.id) ?? null);
+          }}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </AppShell>
   );
 }

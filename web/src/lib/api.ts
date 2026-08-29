@@ -37,9 +37,23 @@ export async function createJob({ files, backgroundFile, backgroundKey }: Create
 export async function updateProduct(
   jobId: string,
   productId: string,
-  patch: Partial<ProductSheet>,
+  patch: Partial<ProductSheet> & { visible?: boolean },
 ): Promise<Job> {
   const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return asJson(res);
+}
+
+export interface CatalogMetaPatch {
+  catalog_title?: string;
+  catalog_summary?: string;
+}
+
+export async function updateCatalog(jobId: string, patch: CatalogMetaPatch): Promise<Job> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

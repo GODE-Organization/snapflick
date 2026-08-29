@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from snapflick.models.schemas import (
     ProductRecord,
     ProductSheet,
 )
-from snapflick.tools.catalog_tools import render_catalog_html
+from snapflick.tools.catalog_tools import export_catalog_json, render_catalog_html
 
 
 def _make_job(tmp_path: Path) -> Job:
@@ -86,3 +87,23 @@ def test_render_catalog_html_sin_embed_usa_ruta_directa(tmp_path: Path):
     out = render_catalog_html(job, str(tmp_path / "catalogo.html"), embed_images=False)
     html = Path(out).read_text(encoding="utf-8")
     assert "data:image" not in html
+
+
+def test_render_catalog_html_oculta_productos_no_visibles(tmp_path: Path):
+    job = _make_job(tmp_path)
+    job.products[0].visible = False
+
+    out = render_catalog_html(job, str(tmp_path / "catalogo.html"))
+    html = Path(out).read_text(encoding="utf-8")
+
+    assert "Refresco de cola" not in html
+    assert ">0<" in html or "0 producto" in html
+
+
+def test_export_catalog_json_excluye_productos_no_visibles(tmp_path: Path):
+    job = _make_job(tmp_path)
+    job.products[0].visible = False
+
+    out = export_catalog_json(job, str(tmp_path / "catalogo.json"))
+    data = json.loads(Path(out).read_text(encoding="utf-8"))
+    assert data["products"] == []
