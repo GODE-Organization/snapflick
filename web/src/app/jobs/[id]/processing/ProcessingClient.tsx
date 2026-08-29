@@ -50,10 +50,25 @@ export function ProcessingClient({ jobId }: { jobId: string }) {
       <AppShell>
         <div className="mx-auto max-w-2xl px-4 py-16 text-center">
           <h1 className="text-headline-lg font-semibold text-error">El lote falló</h1>
-          <ul className="mt-6 list-disc rounded-lg bg-error-container p-4 text-left text-on-error-container">
-            {job.errors.map((e, i) => (
-              <li key={i}>{e}</li>
-            ))}
+          <ul className="mt-6 flex flex-col gap-3 text-left">
+            {job.errors.map((e, i) => {
+              const [file, ...rest] = e.split(": ");
+              const message = rest.join(": ") || file;
+              return (
+                <li
+                  key={i}
+                  className="flex items-start gap-3 rounded-lg bg-error-container p-4 text-on-error-container"
+                >
+                  <Icon name="error" className="mt-0.5 shrink-0 text-error" />
+                  <div className="flex flex-col">
+                    {rest.length > 0 && (
+                      <span className="font-mono text-label-sm opacity-70">{file}</span>
+                    )}
+                    <span className="text-body-md">{message}</span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
           <Link href="/" className="mt-6 inline-block font-semibold text-primary">
             Intentar de nuevo →

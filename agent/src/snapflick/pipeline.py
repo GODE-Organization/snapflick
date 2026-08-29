@@ -15,6 +15,68 @@ from .tools.image_tools import compose_on_background, make_thumbnail, remove_bac
 
 log = logging.getLogger(__name__)
 
+_GEMINI_STATUS_MESSAGES = {
+    "UNAVAILABLE": (
+        "El modelo de IA está temporalmente saturado por alta demanda. "
+        "Vuelve a intentarlo en unos minutos."
+    ),
+    "RESOURCE_EXHAUSTED": (
+        "Se alcanzó el límite de uso del modelo de IA. Intenta de nuevo más tarde."
+    ),
+    "DEADLINE_EXCEEDED": "El modelo de IA tardó demasiado en responder. Vuelve a intentarlo.",
+    "UNAUTHENTICATED": (
+        "Error de autenticación con el proveedor de IA. Verifica la API key configurada."
+    ),
+    "PERMISSION_DENIED": (
+        "El proveedor de IA rechazó la solicitud por permisos. Verifica la API key configurada."
+    ),
+    "INVALID_ARGUMENT": "La foto no pudo ser interpretada por el modelo de IA.",
+}
+
+# Usado como fallback para proveedores cuyo SDK expone un status_code HTTP
+# (OpenAI/ChatGPT, Ollama) en vez del string de status de Gemini.
+_HTTP_CODE_MESSAGES = {
+    401: "Error de autenticación con el proveedor de IA. Verifica la API key configurada.",
+    403: "El proveedor de IA rechazó la solicitud por permisos. Verifica la API key configurada.",
+    404: "El modelo de IA configurado no existe o no está disponible para esta cuenta.",
+    408: "El modelo de IA tardó demasiado en responder. Vuelve a intentarlo.",
+    429: "Se alcanzó el límite de uso del modelo de IA. Intenta de nuevo más tarde.",
+    500: "El modelo de IA tuvo un error interno. Vuelve a intentarlo en unos minutos.",
+    502: _GEMINI_STATUS_MESSAGES["UNAVAILABLE"],
+    503: _GEMINI_STATUS_MESSAGES["UNAVAILABLE"],
+    504: "El modelo de IA tardó demasiado en responder. Vuelve a intentarlo.",
+}
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    """Traduce errores de proveedores de IA (y otros) a un mensaje breve en
+    español apto para mostrar en el front, en vez de la excepción cruda (que
+    para GeminiModel/OpenAI incluye el JSON completo de la respuesta de error)."""
+    try:
+        from google.genai.errors import APIError as GeminiAPIError
+    except ImportError:
+        GeminiAPIError = ()  # type: ignore[assignment]
+
+    if isinstance(exc, GeminiAPIError):
+        status = exc.status or ""
+        known = _GEMINI_STATUS_MESSAGES.get(status)
+        if known:
+            return known
+        return f"Error del modelo de IA ({exc.code} {status}): {exc.message or 'sin detalle'}."
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        known = _HTTP_CODE_MESSAGES.get(status_code)
+        if known:
+            return known
+        message = getattr(exc, "message", None) or str(exc)
+        return f"Error del modelo de IA ({status_code}): {message}"
+
+    if type(exc).__name__ in ("ConnectionError", "ConnectError"):
+        return "No se pudo conectar con el modelo de IA. Verifica que el servicio esté disponible."
+
+    return f"No se pudo procesar la imagen ({type(exc).__name__}): {exc}"
+
 
 def run_job(
     job: Job,
@@ -44,8 +106,9 @@ def run_job(
             job.products.append(ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img))
         except Exception as exc:  # una imagen mala no puede tumbar el lote
             log.exception("Fallo procesando %s", src)
-            img.error = str(exc)
-            job.errors.append(f"{src}: {exc}")
+            friendly = _friendly_error_message(exc)
+            img.error = friendly
+            job.errors.append(f"{Path(src).name}: {friendly}")
         finally:
             job.processed_images += 1
 
@@ -60,6 +123,6 @@ def run_job(
                 p.sheet.category = a.category
 
     job.catalog_html_path = render_catalog_html(job, str(out / "catalogo.html"))
-    export_catalog_json(job, str(out / "catalogo.json"))
+    job.catalog_json_path = export_catalog_json(job, str(out / "catalogo.json"))
     job.status = JobStatus.DONE
     return job
