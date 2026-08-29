@@ -13,6 +13,7 @@ from pathlib import Path
 
 import snapflick.main as main_module
 import snapflick.pipeline as pipeline_module
+from snapflick.db import JobStore
 from snapflick.models.schemas import CatalogPlan, CategoryAssignment, Job, JobStatus, ProductSheet
 
 
@@ -80,6 +81,10 @@ def test_process_actualiza_el_job_que_vive_en_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
     monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
     monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
+    # STORE ya se construyó al importar main.py, apuntando al data_dir real —
+    # redirigirlo aquí evita que este test escriba jobs falsos en la base de
+    # datos de desarrollo.
+    monkeypatch.setattr(main_module, "STORE", JobStore(tmp_path / "jobs.db"))
 
     job_id = "job-abc"
     job = Job(id=job_id, total_images=2)

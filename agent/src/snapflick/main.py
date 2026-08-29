@@ -2,31 +2,59 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import settings
+from .db import JobStore
 from .models.schemas import Job, JobStatus
 from .pipeline import run_job
+from .tools.catalog_tools import export_catalog_json, render_catalog_html
 from .tools.storage_tools import get_storage
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="SnapFlick", version="0.1.0")
+# Bucle de eventos de uvicorn, capturado en el lifespan de abajo. `_notify_change`
+# se llama desde hilos de worker (BackgroundTasks, rutas sync) que no son ese
+# bucle, así que necesita la referencia para poder agendar los `broadcast_*`
+# (coroutines) con `asyncio.run_coroutine_threadsafe`.
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _loop
+    _loop = asyncio.get_running_loop()
+    yield
+
+
+app = FastAPI(title="SnapFlick", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DATA = Path(settings.data_dir)
 DATA.mkdir(parents=True, exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(DATA)), name="files")
 
-JOBS: dict[str, Job] = {}  # en producción: DynamoDB
+STORE = JobStore(DATA / "snapflick.db")
+JOBS: dict[str, Job] = {j.id: j for j in STORE.all()}  # caché en memoria; SQLite es la fuente
 
 
 def _relative_key(path: str) -> str | None:
@@ -97,6 +125,102 @@ def job_to_public_dict(job: Job) -> dict:
     return data
 
 
+def _cover_thumbnail(job: Job) -> str | None:
+    for record in job.products:
+        thumb = _to_url(record.image.thumbnail_path or record.image.composed_path)
+        if thumb:
+            return thumb
+    return None
+
+
+def _job_summaries() -> list[dict]:
+    return [
+        {
+            "id": j.id,
+            "status": j.status,
+            "products": len(j.products),
+            "created_at": j.created_at.isoformat(),
+            "catalog_title": j.plan.catalog_title if j.plan else None,
+            "catalog_html_path": _to_url(j.catalog_html_path),
+            "thumbnail_url": _cover_thumbnail(j),
+        }
+        for j in sorted(JOBS.values(), key=lambda j: j.created_at, reverse=True)
+    ]
+
+
+class ConnectionManager:
+    """Suscriptores WebSocket de `/ws/jobs` (lista) y `/ws/jobs/{id}` (un job).
+
+    Reemplaza el polling que hacía el frontend (`useJobs`/`useJob` con
+    `refreshInterval`): en vez de que cada cliente pregunte cada 2-5s, el
+    servidor empuja el estado nuevo solo cuando algo cambia de verdad.
+    """
+
+    def __init__(self) -> None:
+        self.list_subscribers: set[WebSocket] = set()
+        self.job_subscribers: dict[str, set[WebSocket]] = {}
+
+    async def connect_list(self, ws: WebSocket) -> None:
+        await ws.accept()
+        self.list_subscribers.add(ws)
+        await ws.send_json(_job_summaries())
+
+    def disconnect_list(self, ws: WebSocket) -> None:
+        self.list_subscribers.discard(ws)
+
+    async def connect_job(self, ws: WebSocket, job_id: str) -> None:
+        await ws.accept()
+        self.job_subscribers.setdefault(job_id, set()).add(ws)
+        if job_id in JOBS:
+            await ws.send_json(job_to_public_dict(JOBS[job_id]))
+
+    def disconnect_job(self, ws: WebSocket, job_id: str) -> None:
+        subs = self.job_subscribers.get(job_id)
+        if not subs:
+            return
+        subs.discard(ws)
+        if not subs:
+            del self.job_subscribers[job_id]
+
+    async def broadcast_list(self) -> None:
+        if not self.list_subscribers:
+            return
+        data = _job_summaries()
+        dead = {ws for ws in self.list_subscribers if not await _try_send(ws, data)}
+        self.list_subscribers -= dead
+
+    async def broadcast_job(self, job_id: str) -> None:
+        subs = self.job_subscribers.get(job_id)
+        if not subs or job_id not in JOBS:
+            return
+        data = job_to_public_dict(JOBS[job_id])
+        dead = {ws for ws in subs if not await _try_send(ws, data)}
+        subs -= dead
+
+
+async def _try_send(ws: WebSocket, data: object) -> bool:
+    try:
+        await ws.send_json(data)
+        return True
+    except Exception:
+        return False
+
+
+manager = ConnectionManager()
+
+
+def _notify_change(job_id: str) -> None:
+    """Agenda el broadcast de `job_id` (y de la lista) en el bucle de uvicorn.
+
+    Se llama desde código sync que puede correr en un hilo de worker, de ahí
+    `run_coroutine_threadsafe` en vez de simplemente `await`.
+    """
+    if _loop is None:
+        return
+    asyncio.run_coroutine_threadsafe(manager.broadcast_job(job_id), _loop)
+    asyncio.run_coroutine_threadsafe(manager.broadcast_list(), _loop)
+
+
 # ---------- contrato AgentCore ----------
 
 
@@ -157,18 +281,28 @@ async def create_job(
 
     job = Job(id=job_id, total_images=len(paths), background_key=bg_path)
     JOBS[job_id] = job
+    STORE.save(job)
+    _notify_change(job_id)
     background_tasks.add_task(_process, job_id, paths, bg_path)
     return job_to_public_dict(job)
+
+
+def _persist_and_notify(job: Job) -> None:
+    STORE.save(job)
+    _notify_change(job.id)
 
 
 def _process(job_id: str, paths: list[str], bg: str | None) -> None:
     job = JOBS[job_id]
     try:
-        run_job(job, paths, bg)
+        run_job(job, paths, bg, on_update=_persist_and_notify)
         _sync_job_to_storage(job)
     except Exception as exc:
         job.status = JobStatus.FAILED
         job.errors.append(str(exc))
+    finally:
+        STORE.save(job)
+        _notify_change(job_id)
 
 
 @app.get("/jobs/{job_id}", response_model=Job)
@@ -178,12 +312,83 @@ def get_job(job_id: str) -> dict:
     return job_to_public_dict(JOBS[job_id])
 
 
+class ProductSheetUpdate(BaseModel):
+    """Campos editables por el usuario en la vista de revisión.
+
+    Todos opcionales: el frontend solo envía los campos que el usuario tocó.
+    `confidence`, `ingredients` y `language_detected` no se exponen porque la
+    revisión humana los vuelve irrelevantes: una vez que una persona confirma
+    o corrige el dato, ya no hace falta que la ficha "confíe" en la extracción.
+    """
+
+    name: str | None = None
+    brand: str | None = None
+    presentation: str | None = None
+    description: str | None = None
+    category: str | None = None
+    keywords: list[str] | None = None
+    barcode: str | None = None
+    notes: str | None = None
+
+
+@app.patch("/jobs/{job_id}/products/{product_id}", response_model=Job)
+def update_product(job_id: str, product_id: str, payload: ProductSheetUpdate) -> dict:
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+    record = next((p for p in job.products if p.id == product_id), None)
+    if record is None:
+        raise HTTPException(404, "Producto no encontrado")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(record.sheet, field, value)
+
+    new_category = updates.get("category")
+    if new_category and job.plan:
+        if new_category not in job.plan.categories:
+            job.plan.categories.append(new_category)
+        for assignment in job.plan.assignments:
+            if assignment.product_id == product_id:
+                assignment.category = new_category
+
+    if job.plan and job.catalog_html_path:
+        out_dir = Path(job.catalog_html_path).parent
+        job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
+        export_catalog_json(job, str(out_dir / "catalogo.json"))
+
+    STORE.save(job)
+    _notify_change(job_id)
+    return job_to_public_dict(job)
+
+
 @app.get("/jobs")
 def list_jobs() -> list[dict]:
-    return [
-        {"id": j.id, "status": j.status, "products": len(j.products), "created_at": j.created_at}
-        for j in JOBS.values()
-    ]
+    return _job_summaries()
+
+
+@app.websocket("/ws/jobs")
+async def ws_jobs(websocket: WebSocket) -> None:
+    await manager.connect_list(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # sin mensajes esperados; solo detecta el cierre
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect_list(websocket)
+
+
+@app.websocket("/ws/jobs/{job_id}")
+async def ws_job(websocket: WebSocket, job_id: str) -> None:
+    await manager.connect_job(websocket, job_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect_job(websocket, job_id)
 
 
 @app.post("/backgrounds")

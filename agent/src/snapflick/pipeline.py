@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from .agents.catalog_agent import build_catalog_agent, plan_catalog
@@ -83,10 +84,15 @@ def run_job(
     image_paths: list[str],
     background_path: str | None = None,
     workdir: Path | None = None,
+    on_update: Callable[[Job], None] | None = None,
 ) -> Job:
     """Procesa `job` in place. El llamador es dueño del objeto `Job` (p.ej. el que
     vive en el diccionario JOBS de main.py), así que cualquiera que tenga una
-    referencia ve `processed_images` avanzar mientras el lote corre."""
+    referencia ve `processed_images` avanzar mientras el lote corre.
+
+    `on_update`, si se pasa, se llama después de cada imagen y al terminar el
+    lote — main.py lo usa para persistir el progreso en SQLite a medida que
+    avanza, no solo al final (ver `db.JobStore`)."""
     job.status = JobStatus.PROCESSING
     out = Path(workdir or settings.data_dir) / job.id
     out.mkdir(parents=True, exist_ok=True)
@@ -111,9 +117,13 @@ def run_job(
             job.errors.append(f"{Path(src).name}: {friendly}")
         finally:
             job.processed_images += 1
+            if on_update:
+                on_update(job)
 
     if not job.products:
         job.status = JobStatus.FAILED
+        if on_update:
+            on_update(job)
         return job
 
     job.plan = plan_catalog(job.products, agent=build_catalog_agent())
@@ -125,4 +135,6 @@ def run_job(
     job.catalog_html_path = render_catalog_html(job, str(out / "catalogo.html"))
     job.catalog_json_path = export_catalog_json(job, str(out / "catalogo.json"))
     job.status = JobStatus.DONE
+    if on_update:
+        on_update(job)
     return job

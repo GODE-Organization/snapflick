@@ -14,6 +14,8 @@ import { useJobs } from "@/lib/hooks";
 export default function DashboardPage() {
   const router = useRouter();
   const { data: jobs } = useJobs();
+  const doneJobs = jobs?.filter((j) => j.status === "done") ?? [];
+  const otherJobs = jobs?.filter((j) => j.status !== "done") ?? [];
   const [files, setFiles] = useState<File[]>([]);
   const [background, setBackground] = useState<BackgroundChoice>({ mode: "none" });
   const [submitting, setSubmitting] = useState(false);
@@ -84,25 +86,58 @@ export default function DashboardPage() {
             </button>
           </div>
 
-          {/* Sidebar: recent projects */}
-          <div className="lg:col-span-4">
-            <aside className="sticky top-24 rounded-xl bg-surface p-6 shadow-sm">
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-headline-md font-semibold text-on-surface">Lotes recientes</h2>
-              </div>
-              <div className="space-y-4">
-                {!jobs || jobs.length === 0 ? (
-                  <p className="text-body-md text-on-surface-variant">
-                    Todavía no has creado ningún lote. Sube tus primeras fotos para empezar.
-                  </p>
-                ) : (
-                  jobs.map((job) => {
-                    const href =
-                      job.status === "done" ? `/jobs/${job.id}/catalog` : `/jobs/${job.id}/processing`;
-                    return (
+          {/* Sidebar: catalogs + in-progress batches */}
+          <div className="space-y-8 lg:col-span-4">
+            <aside className="sticky top-24 space-y-8 rounded-xl bg-surface p-6 shadow-sm">
+              <div>
+                <h2 className="mb-4 text-headline-md font-semibold text-on-surface">Catálogos generados</h2>
+                <div className="space-y-4">
+                  {!jobs ? (
+                    <p className="text-body-md text-on-surface-variant">Cargando…</p>
+                  ) : doneJobs.length === 0 ? (
+                    <p className="text-body-md text-on-surface-variant">
+                      Todavía no hay catálogos terminados. Aparecerán aquí cuando un lote termine de procesarse.
+                    </p>
+                  ) : (
+                    doneJobs.map((job) => (
                       <Link
                         key={job.id}
-                        href={href}
+                        href={`/jobs/${job.id}/catalog`}
+                        className="group flex items-center gap-4 rounded-lg border border-transparent p-3 transition-colors hover:border-outline-variant/30 hover:bg-surface-container-low"
+                      >
+                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-surface-container-high">
+                          {job.thumbnail_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={job.thumbnail_url} alt={job.catalog_title ?? job.id} className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
+                              <Icon name="storefront" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="truncate font-medium text-body-md text-on-surface">
+                            {job.catalog_title ?? job.id}
+                          </h4>
+                          <p className="truncate text-body-sm text-on-surface-variant">
+                            {job.products} producto{job.products === 1 ? "" : "s"} ·{" "}
+                            {new Date(job.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </Link>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {otherJobs.length > 0 && (
+                <div className="border-t border-outline-variant/30 pt-6">
+                  <h2 className="mb-4 text-headline-md font-semibold text-on-surface">En proceso</h2>
+                  <div className="space-y-4">
+                    {otherJobs.map((job) => (
+                      <Link
+                        key={job.id}
+                        href={`/jobs/${job.id}/processing`}
                         className="group flex items-center justify-between gap-4 rounded-lg border border-transparent p-3 transition-colors hover:border-outline-variant/30 hover:bg-surface-container-low"
                       >
                         <div className="min-w-0">
@@ -114,10 +149,10 @@ export default function DashboardPage() {
                         </div>
                         <JobStatusChip status={job.status} />
                       </Link>
-                    );
-                  })
-                )}
-              </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </aside>
           </div>
         </div>

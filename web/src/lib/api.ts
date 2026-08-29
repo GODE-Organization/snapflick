@@ -1,6 +1,7 @@
-import type { BackgroundOption, Job, JobSummary } from "./types";
+import type { BackgroundOption, Job, ProductSheet } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+export const WS_URL = API_URL.replace(/^http/, "ws");
 
 /** Une una URL relativa devuelta por el backend (p.ej. `/files/...`) con API_URL. */
 export function absoluteUrl(path: string | null | undefined): string | null {
@@ -17,16 +18,6 @@ async function asJson<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function listJobs(): Promise<JobSummary[]> {
-  const res = await fetch(`${API_URL}/jobs`);
-  return asJson(res);
-}
-
-export async function getJob(id: string): Promise<Job> {
-  const res = await fetch(`${API_URL}/jobs/${id}`);
-  return asJson(res);
-}
-
 export interface CreateJobInput {
   files: File[];
   backgroundFile?: File | null;
@@ -40,6 +31,19 @@ export async function createJob({ files, backgroundFile, backgroundKey }: Create
   if (backgroundKey) form.append("background_key", backgroundKey);
 
   const res = await fetch(`${API_URL}/jobs`, { method: "POST", body: form });
+  return asJson(res);
+}
+
+export async function updateProduct(
+  jobId: string,
+  productId: string,
+  patch: Partial<ProductSheet>,
+): Promise<Job> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
   return asJson(res);
 }
 

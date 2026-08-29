@@ -145,6 +145,29 @@ URLs instead of local `/files/...` paths in that case. `list_backgrounds()` stil
 the local `DATA/backgrounds` directory even in S3 mode — that's a known limitation for
 multi-instance deployments (local disk isn't shared across instances), not fixed yet.
 
+### Job persistence: SQLite behind the same in-memory dict
+
+`db.JobStore` (SQLite, stdlib `sqlite3`) is the durable store for `Job` records —
+`main.py`'s `JOBS` dict is now a read-through in-memory cache seeded from
+`STORE.all()` at import time, not the source of truth. Every mutation point
+(`create_job`, `_process`, `update_product`) calls `STORE.save(job)` right after
+mutating the in-memory object, and `pipeline.run_job` accepts an optional
+`on_update` callback (wired to `STORE.save` in `_process`) so progress is persisted
+incrementally per image, not only at request boundaries — a crash mid-batch loses
+at most one image's worth of state, not the whole job.
+
+`Job` is stored as a single JSON blob per row (`model_dump_json()`/
+`model_validate_json()`) rather than modeled as relational tables for
+products/plan — this mirrors "Job mutation, not replacement" above: `Job` is
+already treated everywhere as one self-contained tree, so the persistence layer
+matches that shape instead of fighting it. `status`/`created_at` are duplicated
+into their own columns only so `JobStore.all()` can order rows without
+deserializing every one. Each `JobStore` method opens its own `sqlite3`
+connection — it's called from both the request thread and the `BackgroundTasks`
+thread that runs `_process`, and `sqlite3` connections aren't safe to share
+across threads. The db file lives at `{SNAPFLICK_DATA_DIR}/snapflick.db`
+(gitignored, alongside the rest of `data/`).
+
 ## Gotchas
 
 - **Python must be 3.11.** The `onnxruntime`/`rembg` wheels this project depends on target

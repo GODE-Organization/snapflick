@@ -68,6 +68,9 @@ export interface JobSummary {
   status: JobStatus;
   products: number;
   created_at: string;
+  catalog_title: string | null;
+  catalog_html_path: string | null;
+  thumbnail_url: string | null;
 }
 
 export interface BackgroundOption {
