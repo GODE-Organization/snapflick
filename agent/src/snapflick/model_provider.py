@@ -104,3 +104,43 @@ def build_model() -> Model:
         "Ningún proveedor de modelo está disponible (SNAPFLICK_MODEL_PROVIDER no está "
         "seteada, así que se probaron todos). Intentos:\n" + "\n".join(failures)
     )
+
+
+_MODEL_ID_BY_PROVIDER = {
+    "bedrock": lambda: settings.bedrock_model_id,
+    "gemini": lambda: settings.gemini_model_id,
+    "chatgpt": lambda: settings.chatgpt_model_id,
+    "ollama": lambda: settings.ollama_model_id,
+}
+
+
+def resolved_provider() -> str:
+    """Nombre del proveedor efectivamente en uso (fuerza la resolución si aún no corrió)."""
+    if _resolved_provider is None:
+        build_model()
+    assert _resolved_provider is not None
+    return _resolved_provider
+
+
+def warmup_model() -> None:
+    """Fuerza la resolución del proveedor Y una llamada real mínima, incluso
+    en modo explícito (`SNAPFLICK_MODEL_PROVIDER` seteada), donde `build_model`
+    por sí solo NO prueba el proveedor — solo lo construye.
+
+    Usado por `POST /warmup` (main.py) para pagar el costo de la primera
+    llamada de verdad antes de una demo, no en medio de ella.
+    """
+    model = build_model()
+    if settings.model_provider:
+        _probe(model)
+
+
+def resolved_model_id() -> str:
+    """model_id del proveedor efectivamente en uso.
+
+    Usado para la clave del caché de extracción (ver `retry.py`/`pipeline.py`):
+    identifica qué modelo produjo un resultado cacheado, no solo qué proveedor
+    se pidió (relevante en modo automático, donde el proveedor resuelto puede
+    no ser el primero de la lista).
+    """
+    return _MODEL_ID_BY_PROVIDER[resolved_provider()]()

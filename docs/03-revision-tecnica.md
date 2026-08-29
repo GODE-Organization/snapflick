@@ -256,6 +256,19 @@ pipeline de imagen contra este contenedor tiene que correr en ARM64 nativo (Appl
 Silicon, una instancia Graviton, o un runner ARM64 de CI), no en un host x86 vía
 `buildx`+QEMU.
 
+**Actualización — imagen ahora multi-arch (`linux/amd64` + `linux/arm64` en un solo
+build+push):** este hallazgo sigue vigente sin cambios y es justamente lo que hace posible
+el build multi-arch en un único comando. El paso de horneado (`pooch.retrieve`, sin
+`rembg`/`onnxruntime`) no le importa bajo qué arquitectura corre, real o emulada —
+es solo una descarga HTTP. Lo único que necesita arquitectura nativa (no emulación QEMU)
+es crear un `InferenceSession` de verdad, y eso pasa exclusivamente en runtime, dentro del
+contenedor ya construido para su arquitectura real (amd64 en ECS Express Mode/App Runner,
+arm64 si además se registra en Bedrock AgentCore Runtime) — nunca durante el build ni bajo
+emulación. Motivo por el que `agent/Dockerfile` ya no fija `--platform=linux/arm64`: el
+`FROM python:3.11-slim-bookworm` publica manifiestos para ambas arquitecturas, y
+`docker buildx build --platform linux/amd64,linux/arm64 --push` construye las dos sin
+tocar `onnxruntime` en ningún momento del build.
+
 ---
 
 ## MEDIO

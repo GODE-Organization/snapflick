@@ -28,4 +28,6 @@ Catalog Generator", tema Lumina AI) — tokens en `src/app/globals.css` (`@theme
 
 ## Despliegue
 
-AWS Amplify Hosting, con `web` como raíz de la app en la configuración de monorepo.
+AWS Amplify Hosting, con `web` como raíz de la app en la configuración de monorepo (`amplify.yml`
+en esta carpeta ya trae el build spec). Setear `NEXT_PUBLIC_API_URL` en las variables de
+entorno de la consola de Amplify, apuntando a la API desplegada.

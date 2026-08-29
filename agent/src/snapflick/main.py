@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,10 +25,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import settings
-from .db import JobStore
+from .job_store import get_job_store
+from .model_provider import warmup_model
 from .models.schemas import Job, JobStatus
+from .paths import background_key, upload_original_dir
 from .pipeline import run_job
 from .tools.catalog_tools import export_catalog_json, render_catalog_html
+from .tools.image_tools import _get_session as _get_rembg_session
 from .tools.storage_tools import get_storage
 
 log = logging.getLogger(__name__)
@@ -53,8 +57,8 @@ DATA = Path(settings.data_dir)
 DATA.mkdir(parents=True, exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(DATA)), name="files")
 
-STORE = JobStore(DATA / "snapflick.db")
-JOBS: dict[str, Job] = {j.id: j for j in STORE.all()}  # caché en memoria; SQLite es la fuente
+STORE = get_job_store()  # SQLite local, o S3 (jobs/<id>.json) con SNAPFLICK_S3_BUCKET
+JOBS: dict[str, Job] = {j.id: j for j in STORE.all()}  # caché en memoria; STORE es la fuente
 
 
 def _relative_key(path: str) -> str | None:
@@ -229,6 +233,36 @@ def ping() -> dict:
     return {"status": "healthy"}
 
 
+@app.post("/warmup")
+def warmup() -> dict:
+    """Paga por adelantado los costos de arranque en frío: carga el modelo de
+    rembg en memoria y resuelve/prueba el proveedor de IA con una llamada real.
+
+    Deliberadamente separado de `/ping` (que debe seguir respondiendo al
+    instante para no fallar el health check de App Runner/ECS) — este es el
+    endpoint que se invoca a mano una vez, antes de grabar una demo o de
+    empezar a procesar jobs reales, para que el primer request de verdad no
+    pague ese costo.
+    """
+    result: dict = {}
+
+    t0 = time.monotonic()
+    _get_rembg_session()
+    result["rembg_seconds"] = round(time.monotonic() - t0, 2)
+
+    t0 = time.monotonic()
+    try:
+        warmup_model()
+        result["model_provider_seconds"] = round(time.monotonic() - t0, 2)
+        result["model_provider_ready"] = True
+    except Exception as exc:
+        result["model_provider_seconds"] = round(time.monotonic() - t0, 2)
+        result["model_provider_ready"] = False
+        result["model_provider_error"] = str(exc)
+
+    return result
+
+
 class InvocationRequest(BaseModel):
     prompt: str | None = None
     input: dict | None = None
@@ -261,7 +295,7 @@ async def create_job(
         raise HTTPException(400, f"Máximo {settings.max_images_per_job} imágenes por job")
 
     job_id = uuid.uuid4().hex[:12]
-    indir = DATA / job_id / "original"
+    indir = DATA / upload_original_dir(job_id)
     indir.mkdir(parents=True, exist_ok=True)
 
     paths: list[str] = []
@@ -434,13 +468,13 @@ async def ws_job(websocket: WebSocket, job_id: str) -> None:
 async def upload_background(file: UploadFile = File(...)) -> dict:
     """Guarda un fondo de marca reutilizable."""
     key = f"{uuid.uuid4().hex[:8]}_{file.filename}"
-    dest = DATA / "backgrounds" / key
+    dest = DATA / background_key(key)
     dest.parent.mkdir(parents=True, exist_ok=True)
     with dest.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
     if settings.s3_bucket:
         try:
-            get_storage().save(str(dest), f"backgrounds/{key}")
+            get_storage().save(str(dest), background_key(key))
         except Exception:
             log.exception("No se pudo subir el fondo %s a S3", key)
     return {"background_key": key, "url": _to_url(str(dest))}
@@ -448,12 +482,14 @@ async def upload_background(file: UploadFile = File(...)) -> dict:
 
 @app.get("/backgrounds")
 def list_backgrounds() -> list[dict]:
-    """Lista los fondos de marca guardados previamente."""
-    bg_dir = DATA / "backgrounds"
-    if not bg_dir.exists():
-        return []
+    """Lista los fondos de marca guardados previamente.
+
+    Va siempre a través de `Storage.list_keys` (disco local o S3, según
+    `SNAPFLICK_S3_BUCKET`) en vez de leer el disco local directamente — así
+    esto también funciona detrás de un despliegue con varias instancias.
+    """
+    storage = get_storage()
     return [
-        {"background_key": f.name, "url": _to_url(str(f))}
-        for f in sorted(bg_dir.iterdir())
-        if f.is_file()
+        {"background_key": key.removeprefix("backgrounds/"), "url": storage.url(key)}
+        for key in storage.list_keys("backgrounds/")
     ]

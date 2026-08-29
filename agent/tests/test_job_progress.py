@@ -58,6 +58,12 @@ def test_run_job_muta_el_mismo_objeto_que_recibe(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
     monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
     monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    # el caché de extracción mete el proveedor/modelo resuelto en la clave;
+    # sin esto, `_cached_extract_product_sheet` dispararía una resolución real
+    # de proveedor (red) en medio de un test que no debería tocar la red.
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
+    monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
 
     job = Job(id="job-progress", total_images=3)
     image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(3)]
@@ -80,6 +86,8 @@ def test_process_actualiza_el_job_que_vive_en_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
     monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
     monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
     # STORE ya se construyó al importar main.py, apuntando al data_dir real —
     # redirigirlo aquí evita que este test escriba jobs falsos en la base de
@@ -103,3 +111,58 @@ def test_process_actualiza_el_job_que_vive_en_jobs(tmp_path, monkeypatch):
     assert main_module.JOBS[job_id].status == JobStatus.DONE
 
     del main_module.JOBS[job_id]
+
+
+def test_run_job_reusa_el_cache_de_extraccion_para_la_misma_imagen(tmp_path, monkeypatch):
+    """Regresión del punto 6 del pedido: repetir el job con la misma imagen no
+    debe volver a llamar al modelo de IA (reutiliza la extracción cacheada)."""
+    calls = {"n": 0}
+
+    def _counting_extract_product_sheet(path, agent=None):
+        calls["n"] += 1
+        return _fake_extract_product_sheet(path, agent)
+
+    monkeypatch.setattr(pipeline_module, "remove_background", _fake_remove_background)
+    monkeypatch.setattr(pipeline_module, "compose_on_background", _fake_compose_on_background)
+    monkeypatch.setattr(pipeline_module, "make_thumbnail", _fake_make_thumbnail)
+    monkeypatch.setattr(pipeline_module, "extract_product_sheet", _counting_extract_product_sheet)
+    monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
+    monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
+    monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+
+    image_path = tmp_path / "same_photo.jpg"
+    image_path.write_bytes(b"identical-bytes")
+
+    job1 = Job(id="job-cache-1", total_images=1)
+    pipeline_module.run_job(job1, [str(image_path)], workdir=tmp_path)
+
+    job2 = Job(id="job-cache-2", total_images=1)
+    pipeline_module.run_job(job2, [str(image_path)], workdir=tmp_path)
+
+    assert calls["n"] == 1, "la segunda corrida con la misma imagen debió reutilizar el caché"
+    assert len(job1.products) == 1
+    assert len(job2.products) == 1
+
+
+def test_cache_key_cambia_si_cambia_el_prompt_o_el_proveedor(monkeypatch):
+    """La clave del caché de extracción debe invalidarse sola si se ajusta el
+    prompt o cambia el proveedor/modelo resuelto — no solo si cambia la
+    imagen. Ver PROMPT_VERSION en agents/vision_agent.py."""
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "gemini")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "gemini-2.5-flash")
+    monkeypatch.setattr(pipeline_module, "PROMPT_VERSION", "v1")
+    image_bytes = b"same-image-bytes"
+
+    key_v1 = pipeline_module._cache_key(image_bytes)
+
+    monkeypatch.setattr(pipeline_module, "PROMPT_VERSION", "v2")
+    key_v2 = pipeline_module._cache_key(image_bytes)
+
+    monkeypatch.setattr(pipeline_module, "PROMPT_VERSION", "v1")
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "chatgpt")
+    key_other_provider = pipeline_module._cache_key(image_bytes)
+
+    assert len({key_v1, key_v2, key_other_provider}) == 3

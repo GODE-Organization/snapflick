@@ -14,6 +14,12 @@ from strands import Agent
 from ..model_provider import build_model
 from ..models.schemas import ProductSheet
 
+# Cambiar a mano cada vez que SYSTEM_PROMPT cambie de forma que afecte el
+# resultado de la extracción. Entra en la clave del caché de extracción
+# (ver pipeline.py/retry.py) para que un cambio de prompt no siga sirviendo
+# resultados cacheados con el prompt viejo.
+PROMPT_VERSION = "v1"
+
 SYSTEM_PROMPT = """Eres un catalogador experto de productos de retail.
 
 Recibes la foto de un producto y extraes SOLO lo que realmente se ve en el empaque.

@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import tempfile
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 from .agents.catalog_agent import build_catalog_agent, plan_catalog
-from .agents.vision_agent import build_vision_agent, extract_product_sheet
+from .agents.vision_agent import PROMPT_VERSION, build_vision_agent, extract_product_sheet
 from .config import settings
-from .models.schemas import Job, JobStatus, ProcessedImage, ProductRecord
+from .model_provider import resolved_model_id, resolved_provider
+from .models.schemas import Job, JobStatus, ProcessedImage, ProductRecord, ProductSheet
+from .paths import catalog_dir, upload_processed_dir
+from .retry import with_retry
 from .tools.catalog_tools import export_catalog_json, render_catalog_html
 from .tools.image_tools import compose_on_background, make_thumbnail, remove_background
+from .tools.storage_tools import get_storage
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +85,40 @@ def _friendly_error_message(exc: Exception) -> str:
     return f"No se pudo procesar la imagen ({type(exc).__name__}): {exc}"
 
 
+def _cache_key(image_bytes: bytes) -> str:
+    """Clave del caché de extracción: hash de (proveedor, modelo, versión de
+    prompt, contenido de la imagen), no solo la imagen — así un cambio de
+    prompt o de proveedor invalida el caché en vez de seguir sirviendo
+    resultados viejos silenciosamente."""
+    image_hash = hashlib.sha256(image_bytes).hexdigest()
+    combo = f"{resolved_provider()}|{resolved_model_id()}|{PROMPT_VERSION}|{image_hash}"
+    return f"cache/{hashlib.sha256(combo.encode()).hexdigest()}.json"
+
+
+def _cached_extract_product_sheet(src: str, agent) -> ProductSheet:
+    """Como `extract_product_sheet`, pero reutiliza el resultado si ya se
+    procesó esta misma imagen con este mismo proveedor/modelo/prompt. Evita
+    gastar cuota de la capa gratuita al repetir la demo o al iterar en
+    desarrollo."""
+    image_bytes = Path(src).read_bytes()
+    key = _cache_key(image_bytes)
+    storage = get_storage()
+
+    if storage.exists(key):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = str(Path(tmp) / "sheet.json")
+            storage.fetch(key, tmp_path)
+            log.info("Caché de extracción: hit para %s", Path(src).name)
+            return ProductSheet.model_validate_json(Path(tmp_path).read_text(encoding="utf-8"))
+
+    sheet = with_retry(extract_product_sheet, src, agent=agent)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp) / "sheet.json"
+        tmp_path.write_text(sheet.model_dump_json(), encoding="utf-8")
+        storage.save(str(tmp_path), key)
+    return sheet
+
+
 def run_job(
     job: Job,
     image_paths: list[str],
@@ -94,8 +134,10 @@ def run_job(
     lote — main.py lo usa para persistir el progreso en SQLite a medida que
     avanza, no solo al final (ver `db.JobStore`)."""
     job.status = JobStatus.PROCESSING
-    out = Path(workdir or settings.data_dir) / job.id
-    out.mkdir(parents=True, exist_ok=True)
+    root = Path(workdir or settings.data_dir)
+    processed_dir = root / upload_processed_dir(job.id)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    cat_dir = root / catalog_dir(job.id)
 
     vision = build_vision_agent()
 
@@ -103,12 +145,14 @@ def run_job(
         stem = Path(src).stem
         img = ProcessedImage(source_path=src)
         try:
-            img.cutout_path = remove_background(src, str(out / f"{stem}_cutout.png"))
+            img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
             img.composed_path = compose_on_background(
-                img.cutout_path, background_path, str(out / f"{stem}.jpg")
+                img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
             )
-            img.thumbnail_path = make_thumbnail(img.composed_path, str(out / f"{stem}_thumb.jpg"))
-            sheet = extract_product_sheet(src, agent=vision)
+            img.thumbnail_path = make_thumbnail(
+                img.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
+            )
+            sheet = _cached_extract_product_sheet(src, agent=vision)
             job.products.append(ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img))
         except Exception as exc:  # una imagen mala no puede tumbar el lote
             log.exception("Fallo procesando %s", src)
@@ -126,14 +170,14 @@ def run_job(
             on_update(job)
         return job
 
-    job.plan = plan_catalog(job.products, agent=build_catalog_agent())
+    job.plan = with_retry(plan_catalog, job.products, agent=build_catalog_agent())
     for a in job.plan.assignments:
         for p in job.products:
             if p.id == a.product_id:
                 p.sheet.category = a.category
 
-    job.catalog_html_path = render_catalog_html(job, str(out / "catalogo.html"))
-    job.catalog_json_path = export_catalog_json(job, str(out / "catalogo.json"))
+    job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
+    job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
     job.status = JobStatus.DONE
     if on_update:
         on_update(job)

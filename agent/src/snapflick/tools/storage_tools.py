@@ -22,6 +22,12 @@ class Storage(ABC):
     @abstractmethod
     def url(self, key: str) -> str: ...
 
+    @abstractmethod
+    def exists(self, key: str) -> bool: ...
+
+    @abstractmethod
+    def list_keys(self, prefix: str) -> list[str]: ...
+
 
 class LocalStorage(Storage):
     def __init__(self, root: Path | None = None):
@@ -44,6 +50,19 @@ class LocalStorage(Storage):
     def url(self, key: str) -> str:
         return f"/files/{key}"
 
+    def exists(self, key: str) -> bool:
+        return (self.root / key).exists()
+
+    def list_keys(self, prefix: str) -> list[str]:
+        base = self.root / prefix
+        if not base.exists():
+            return []
+        return [
+            str((base / f.name).relative_to(self.root)).replace("\\", "/")
+            for f in sorted(base.iterdir())
+            if f.is_file()
+        ]
+
 
 class S3Storage(Storage):
     def __init__(self, bucket: str, region: str):
@@ -65,6 +84,24 @@ class S3Storage(Storage):
         return self.client.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires
         )
+
+    def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                return False
+            raise
+
+    def list_keys(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            keys += [obj["Key"] for obj in page.get("Contents", [])]
+        return keys
 
 
 def get_storage() -> Storage:

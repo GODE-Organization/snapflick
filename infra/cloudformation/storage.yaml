@@ -29,6 +29,12 @@ Resources:
             Prefix: uploads/
             ExpirationInDays: 30
 
+  # NOTA: sin usar por el código actual. El estado de los jobs se guarda como
+  # un JSON por job en el propio CatalogBucket (jobs/<job_id>.json, ver
+  # agent/src/snapflick/job_store.py) en vez de en esta tabla, para no sumar
+  # un servicio más al despliegue. Se deja provisionada por si en el futuro
+  # el volumen de jobs justifica un índice separado en vez de listar+bajar
+  # todo el prefijo jobs/ de S3 (ver CLAUDE.md, "Job persistence").
   JobsTable:
     Type: AWS::DynamoDB::Table
     Properties:
