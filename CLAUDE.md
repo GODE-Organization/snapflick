@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SnapFlick converts homemade product photos into a publishable catalog: it removes the
 background, composes the product onto a saved brand background, reads the packaging with
-a multimodal Bedrock model to extract structured product data, categorizes the whole batch
+a multimodal model to extract structured product data, categorizes the whole batch
 coherently, and renders an HTML/JSON catalog.
 
 Monorepo: `agent/` (Python — Strands Agents SDK + FastAPI) and `web/` (Next.js, not yet
@@ -113,12 +113,37 @@ from `agent/.env` (see `agent/.env.example` for the full list, including
 across the codebase — patch attributes on it in tests (`monkeypatch.setattr(settings, ...)`
 via whichever module imported it) rather than reassigning the name.
 
+### Four interchangeable model providers, with auto-fallback
+
+`model_provider.py`'s `build_model()` supports `bedrock`, `gemini`, `chatgpt` (OpenAI), and
+`ollama` — switching is `SNAPFLICK_MODEL_PROVIDER=<name>` plus that provider's key/host, no
+agent code changes. When `SNAPFLICK_MODEL_PROVIDER` is unset, `build_model()` runs in
+auto-detect mode: it tries each provider in `FALLBACK_ORDER` (bedrock → gemini → chatgpt →
+ollama), building the model and firing one real minimal call (`_probe`) to confirm it
+actually responds; the first one that doesn't raise wins and is cached at module level
+(`_resolved_model`) for the rest of the process. When `SNAPFLICK_MODEL_PROVIDER` *is* set,
+only that provider is tried — no fallback, the error propagates as-is. Optional deps
+(`google-genai`, `openai`, `ollama`) are imported lazily inside each `_build_*()` so a
+missing package just makes that candidate fail over to the next one in auto mode, rather
+than crashing at import time.
+
+`pipeline.py`'s `_friendly_error_message()` translates raw provider exceptions (Gemini's
+`APIError`, or anything exposing an HTTP-like `.status_code`) into short Spanish messages
+for the frontend instead of dumping the raw exception `str()` (which for Gemini includes
+the full JSON error body) — extend `_GEMINI_STATUS_MESSAGES` / `_HTTP_CODE_MESSAGES` there
+when a new provider's error shape needs a friendlier mapping.
+
 ### Storage
 
-`tools/storage_tools.py` defines a `Storage` interface (`LocalStorage`/`S3Storage`) that is
-currently unused — `main.py` writes files directly with `shutil.copyfileobj`. This is a
-known, deliberate gap (not accidental dead code left by oversight): it gets adopted for
-real when storage moves to S3, rather than wiring it in now for no behavioral change.
+`tools/storage_tools.py` defines a `Storage` interface (`LocalStorage`/`S3Storage`) picked
+by `get_storage()` based on `SNAPFLICK_S3_BUCKET`. Image processing (rembg, Pillow) always
+writes to local disk under `SNAPFLICK_DATA_DIR` first — those libraries need real
+filesystem paths — but `main.py`'s `_sync_job_to_storage()` then replicates every finished
+job artifact (originals, cutouts, composed images, thumbnails, catalog html/json,
+backgrounds) to S3 when `SNAPFLICK_S3_BUCKET` is set, and `_to_url()` serves presigned S3
+URLs instead of local `/files/...` paths in that case. `list_backgrounds()` still lists from
+the local `DATA/backgrounds` directory even in S3 mode — that's a known limitation for
+multi-instance deployments (local disk isn't shared across instances), not fixed yet.
 
 ## Gotchas
 
@@ -136,11 +161,17 @@ real when storage moves to S3, rather than wiring it in now for no behavioral ch
 - **HEIC/HEIF photos aren't supported.** `strands.types.media.ImageFormat` and Pillow (no
   `pillow-heif`) don't accept HEIC, which is what iPhones export by default. Not fixed —
   documented as a known limitation.
-- Running the full `/jobs` flow (or `make catalog`) requires real AWS credentials with
-  Bedrock model access — the image pipeline (crop/compose) runs fully local, but
-  `VisionAgent`/`CatalogAgent` will fail per-image with `NoCredentialsError` without them.
-  The test suite covers the agent logic with a fake `Agent` double instead (see
+- Running the full `/jobs` flow (or `make catalog`) requires at least one working model
+  provider — the image pipeline (crop/compose) runs fully local, but `VisionAgent`/
+  `CatalogAgent` will fail per-image without one (`NoCredentialsError` for Bedrock, a clear
+  "Falta SNAPFLICK_GEMINI_API_KEY"-style `ValueError` for gemini/chatgpt, connection refused
+  for ollama). The test suite covers the agent logic with a fake `Agent` double instead (see
   `tests/test_agents_mocked.py`) so this isn't required to develop or run tests.
+- `google-genai`, `openai`, and `ollama` are optional extras (`pip install -e ".[gemini]"`,
+  `".[chatgpt]"`, `".[ollama]"`) — only `pip install -e ".[dev]"` (which doesn't pull them
+  in) is required by `make install`. In auto-detect mode (`SNAPFLICK_MODEL_PROVIDER` unset)
+  a provider whose package isn't installed just fails over to the next one; install the
+  extras for whichever providers you actually want auto-detect to be able to pick.
 
 See `docs/00-arquitectura.md`, `docs/01-alcance-del-producto.md`,
 `docs/02-guia-despliegue-aws.md`, and `docs/03-revision-tecnica.md` for more detail on any

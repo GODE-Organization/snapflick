@@ -58,6 +58,7 @@ export interface Job {
   products: ProductRecord[];
   plan: CatalogPlan | null;
   catalog_html_path: string | null;
+  catalog_json_path: string | null;
   errors: string[];
   created_at: string;
 }

@@ -19,8 +19,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3.0", "ruff>=0.7.0", "httpx>=0.27.0"]
-# Solo si SNAPFLICK_MODEL_PROVIDER=gemini (ver model_provider.py)
+# Necesarios solo para que ese proveedor pueda ser probado/usado (ver model_provider.py).
+# En modo automático (SNAPFLICK_MODEL_PROVIDER sin setear) conviene instalar los cuatro.
 gemini = ["google-genai>=1.0.0"]
+chatgpt = ["openai>=1.50.0"]
+ollama = ["ollama>=0.4.0"]
 
 [project.scripts]
 snapflick = "snapflick.cli:main"

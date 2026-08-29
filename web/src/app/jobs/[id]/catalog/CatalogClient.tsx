@@ -47,9 +47,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   }
 
   const publicUrl = absoluteUrl(job.catalog_html_path);
-  const jsonUrl = job.catalog_html_path
-    ? absoluteUrl(job.catalog_html_path.replace(/catalogo\.html$/, "catalogo.json"))
-    : null;
+  const jsonUrl = absoluteUrl(job.catalog_json_path);
   const categories = job.plan?.categories ?? [
     ...new Set(job.products.map((p) => p.sheet.category ?? "Sin categoría")),
   ];

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -14,6 +15,9 @@ from pydantic import BaseModel
 from .config import settings
 from .models.schemas import Job, JobStatus
 from .pipeline import run_job
+from .tools.storage_tools import get_storage
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="SnapFlick", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -25,26 +29,65 @@ app.mount("/files", StaticFiles(directory=str(DATA)), name="files")
 JOBS: dict[str, Job] = {}  # en producción: DynamoDB
 
 
-def _to_url(path: str | None) -> str | None:
-    """Convierte un path absoluto de filesystem (bajo DATA) en una URL /files/...
+def _relative_key(path: str) -> str | None:
+    """Path absoluto de filesystem (bajo DATA) -> key relativo, o None si está fuera de DATA."""
+    try:
+        return Path(path).resolve().relative_to(DATA.resolve()).as_posix()
+    except ValueError:
+        return None
 
-    Los paths que guarda `Job` son absolutos porque `pipeline.py` los usa para
-    abrir archivos con Pillow. El frontend no conoce `SNAPFLICK_DATA_DIR` del
-    servidor, así que esta capa HTTP es la única que traduce uno al otro.
+
+def _to_url(path: str | None) -> str | None:
+    """Convierte un path absoluto de filesystem (bajo DATA) en una URL pública.
+
+    Los paths que guarda `Job` son siempre paths locales bajo DATA, porque
+    `pipeline.py` los necesita ahí para abrir archivos con Pillow/rembg. Esta
+    capa HTTP es la que decide cómo servirlos: con `SNAPFLICK_S3_BUCKET` sin
+    setear, vía `/files/...` (StaticFiles); con el bucket seteado, vía la URL
+    firmada de S3 que ya subió `_sync_job_to_storage`.
     """
     if not path:
         return None
-    try:
-        rel = Path(path).resolve().relative_to(DATA.resolve())
-    except ValueError:
+    rel = _relative_key(path)
+    if rel is None:
         return None
-    return f"/files/{rel.as_posix()}"
+    if settings.s3_bucket:
+        return get_storage().url(rel)
+    return f"/files/{rel}"
+
+
+def _sync_job_to_storage(job: Job) -> None:
+    """Sube los artefactos del job a S3 cuando SNAPFLICK_S3_BUCKET está seteado.
+
+    El procesamiento siempre escribe primero en disco local bajo DATA (rembg y
+    Pillow necesitan paths de filesystem); esto replica el resultado a S3 para
+    que `_to_url` pueda servirlo desde ahí. Sin bucket seteado, es un no-op y
+    todo se sirve directamente desde disco local vía /files.
+    """
+    if not settings.s3_bucket:
+        return
+    storage = get_storage()
+    candidates = [job.background_key, job.catalog_html_path, job.catalog_json_path]
+    for record in job.products:
+        img = record.image
+        candidates += [img.source_path, img.cutout_path, img.composed_path, img.thumbnail_path]
+    for path in candidates:
+        if not path:
+            continue
+        rel = _relative_key(path)
+        if rel is None:
+            continue
+        try:
+            storage.save(path, rel)
+        except Exception:
+            log.exception("No se pudo subir %s a S3 (bucket=%s)", path, settings.s3_bucket)
 
 
 def job_to_public_dict(job: Job) -> dict:
     data = job.model_dump(mode="json")
     data["background_key"] = _to_url(job.background_key)
     data["catalog_html_path"] = _to_url(job.catalog_html_path)
+    data["catalog_json_path"] = _to_url(job.catalog_json_path)
     for product, record in zip(data["products"], job.products, strict=True):
         img = product["image"]
         img["source_path"] = _to_url(record.image.source_path)
@@ -76,6 +119,7 @@ def invocations(req: InvocationRequest) -> dict:
         return {"result": "SnapFlick listo. Envía {'input': {'images': [...]}}"}
     job = Job(id=uuid.uuid4().hex[:12], total_images=len(images))
     run_job(job, images, payload.get("background"))
+    _sync_job_to_storage(job)
     return {"result": job.model_dump(mode="json")}
 
 
@@ -121,6 +165,7 @@ def _process(job_id: str, paths: list[str], bg: str | None) -> None:
     job = JOBS[job_id]
     try:
         run_job(job, paths, bg)
+        _sync_job_to_storage(job)
     except Exception as exc:
         job.status = JobStatus.FAILED
         job.errors.append(str(exc))
@@ -149,7 +194,12 @@ async def upload_background(file: UploadFile = File(...)) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with dest.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
-    return {"background_key": key, "url": f"/files/backgrounds/{key}"}
+    if settings.s3_bucket:
+        try:
+            get_storage().save(str(dest), f"backgrounds/{key}")
+        except Exception:
+            log.exception("No se pudo subir el fondo %s a S3", key)
+    return {"background_key": key, "url": _to_url(str(dest))}
 
 
 @app.get("/backgrounds")
@@ -159,7 +209,7 @@ def list_backgrounds() -> list[dict]:
     if not bg_dir.exists():
         return []
     return [
-        {"background_key": f.name, "url": f"/files/backgrounds/{f.name}"}
+        {"background_key": f.name, "url": _to_url(str(f))}
         for f in sorted(bg_dir.iterdir())
         if f.is_file()
     ]

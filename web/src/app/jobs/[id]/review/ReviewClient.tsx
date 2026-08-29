@@ -70,9 +70,7 @@ export function ReviewClient({ jobId }: { jobId: string }) {
 
   const verified = products.filter((p) => p.sheet.confidence !== "low" && !p.image.error).length;
   const needsReview = products.length - verified;
-  const jsonUrl = job.catalog_html_path
-    ? absoluteUrl(job.catalog_html_path.replace(/catalogo\.html$/, "catalogo.json"))
-    : null;
+  const jsonUrl = absoluteUrl(job.catalog_json_path);
 
   const images: { key: typeof imgTab; label: string; url: string | null }[] = [
     { key: "composed", label: "Compuesta", url: absoluteUrl(current.image.composed_path) },

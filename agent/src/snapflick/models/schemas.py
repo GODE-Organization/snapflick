@@ -83,5 +83,6 @@ class Job(BaseModel):
     products: list[ProductRecord] = Field(default_factory=list)
     plan: CatalogPlan | None = None
     catalog_html_path: str | None = None
+    catalog_json_path: str | None = None
     errors: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
