@@ -259,7 +259,13 @@ connections aren't safe to share across threads. The db file lives at
   `".[chatgpt]"`, `".[ollama]"`) — only `pip install -e ".[dev]"` (which doesn't pull them
   in) is required by `make install`. In auto-detect mode (`SNAPFLICK_MODEL_PROVIDER` unset)
   a provider whose package isn't installed just fails over to the next one; install the
-  extras for whichever providers you actually want auto-detect to be able to pick.
+  extras for whichever providers you actually want auto-detect to be able to pick. **This
+  matters for `agent/Dockerfile` too**: it installs `.[gemini,chatgpt]`, not just `.` — with
+  only the base package, `SNAPFLICK_MODEL_PROVIDER=gemini` (no fallback in explicit-provider
+  mode) fails every job with `ImportError: cannot import name 'genai' from 'google'` inside
+  the container. Confirmed live via `/warmup` against a real built image before this was
+  fixed — don't drop back to a bare `pip install .` in the Dockerfile without re-adding the
+  extra for whichever provider `SNAPFLICK_MODEL_PROVIDER` is actually pinned to.
 
 See `docs/00-arquitectura.md`, `docs/01-alcance-del-producto.md`,
 `docs/02-guia-despliegue-aws.md`, and `docs/03-revision-tecnica.md` for more detail on any

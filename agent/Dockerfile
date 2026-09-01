@@ -19,7 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --no-cache-dir .
+# `.[gemini,chatgpt]`, no solo `.` -- google-genai/openai son extras opcionales
+# (ver pyproject.toml) y sin ellos `build_model()` revienta con
+# `ImportError: cannot import name 'genai' from 'google'` en cuanto
+# SNAPFLICK_MODEL_PROVIDER=gemini (como en el .env de este proyecto) intenta
+# resolver el proveedor -- confirmado corriendo /warmup contra el contenedor
+# real, no solo leyendo el Dockerfile. `ollama` se deja fuera: apunta a un
+# servidor externo, no tiene sentido empaquetarlo dentro de este contenedor.
+RUN pip install --no-cache-dir ".[gemini,chatgpt]"
 
 # Hornea el modelo de rembg en la imagen para que no se descargue en el primer
 # request (y se caiga por timeout). Se descarga con pooch en vez de con

@@ -188,6 +188,11 @@ aws ecs create-express-gateway-service \
   --region $REGION
 ```
 
+El cpu/memoria de la tarea (ver medición real abajo: ~1.44 GiB de pico) se fija con el
+parámetro correspondiente de `create-express-gateway-service` — confirmar el nombre exacto
+del flag con `aws ecs create-express-gateway-service help` al momento de desplegar (no
+verificado contra una cuenta real en este cambio), apuntando a **1 vCPU / 3–4 GB**.
+
 Los dos roles IAM (`ecsTaskExecutionRole`, `ecsInfrastructureRoleForExpressServices`) son
 prerequisito — ver
 [Getting started with ECS Express Mode](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/express-service-getting-started.html)
@@ -200,25 +205,34 @@ corriendo.**
 
 #### Dimensionar cpu/memoria
 
-No se midió en vivo el consumo real de memoria del contenedor en este cambio (rembg +
-onnxruntime + FastAPI/uvicorn procesando una imagen) — falta correrlo antes de fijar el
-`cpu`/`memory` de la tabla de configuraciones soportadas de ECS Express Mode. Para medirlo:
+Medido en vivo con `docker stats` contra el contenedor real (`make docker-build` + `docker run`,
+imagen `linux/amd64`, un job real de una foto contra Gemini), no estimado:
 
+| Momento | Memoria del contenedor |
+|---|---|
+| En reposo, recién arrancado (antes de `/warmup`) | ~62 MiB |
+| Después de `/warmup` (modelo de rembg cargado + proveedor de IA resuelto) | ~860–867 MiB |
+| Pico durante el procesamiento real de una imagen (rembg + composición + llamada a Gemini) | **~1.44 GiB** |
+
+El salto grande es cargar el modelo ONNX de rembg en memoria (de ~62 MiB a ~860 MiB solo con
+eso) — de ahí la importancia de pagar ese costo con `/warmup` antes de la demo en vez de en
+el primer request real. El pico real durante el procesamiento (~1.44 GiB) es el número que
+debe guiar el `cpu`/`memory` de `--primary-container`: de la
+[tabla de configuraciones soportadas](https://docs.aws.amazon.com/apprunner/latest/dg/architecture.html#architecture.vcpu-memory)
+(los mismos escalones que usa Fargate/ECS Express Mode), **1 vCPU / 3 GB o 1 vCPU / 4 GB**
+deja margen razonable sobre ese pico; 2 GB se quedaría corto.
+
+Para volver a medirlo (p.ej. tras cambiar el modelo de rembg o el tamaño de canvas):
 ```bash
-make docker-build                      # imagen local, arquitectura del host
+make docker-build
 docker run --rm -p 8080:8080 --env-file agent/.env --name snapflick-mem snapflick:local &
-curl -X POST localhost:8080/warmup     # paga el costo de arranque en frío primero
-# en otra terminal, mientras se procesa un job real:
+curl -X POST localhost:8080/warmup
+# en otra terminal, mientras se procesa un job real (POST /jobs):
 docker stats --no-stream snapflick-mem
 ```
-
-`docker stats` (no `Get-Process`/`ps` sobre el proceso Python suelto) es lo que hay que usar
-— lo que hay que dimensionar es el contenedor completo (Python + sesión de rembg +
-onnxruntime + servidor), no solo el intérprete. Tomar la lectura en reposo, justo después
-del warmup, y en el pico mientras se procesa una imagen real; el pico es el número que debe
-guiar la fila de `cpu`/`memory` a elegir de la tabla de configuraciones soportadas de ECS
-Express Mode (ver [App Runner supported configurations](https://docs.aws.amazon.com/apprunner/latest/dg/architecture.html#architecture.vcpu-memory)
-como referencia de los mismos escalones que usa Fargate).
+`docker stats` (no `Get-Process`/`ps` sobre el proceso Python suelto) es lo correcto acá —
+lo que hay que dimensionar es el contenedor completo (Python + sesión de rembg + onnxruntime
++ servidor), no solo el intérprete.
 
 ### Camino C (legado, solo cuentas con acceso previo) — AWS App Runner
 
