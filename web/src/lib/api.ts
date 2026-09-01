@@ -47,6 +47,13 @@ export async function updateProduct(
   return asJson(res);
 }
 
+export async function addProduct(jobId: string, file: File): Promise<Job> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_URL}/jobs/${jobId}/products`, { method: "POST", body: form });
+  return asJson(res);
+}
+
 export interface CatalogMetaPatch {
   catalog_title?: string;
   catalog_summary?: string;

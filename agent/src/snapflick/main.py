@@ -29,7 +29,7 @@ from .job_store import get_job_store
 from .model_provider import warmup_model
 from .models.schemas import Job, JobStatus
 from .paths import background_key, upload_original_dir
-from .pipeline import run_job
+from .pipeline import add_product_to_job, run_job
 from .tools.catalog_tools import export_catalog_json, render_catalog_html
 from .tools.image_tools import _get_session as _get_rembg_session
 from .tools.storage_tools import get_storage
@@ -430,6 +430,39 @@ def update_product(job_id: str, product_id: str, payload: ProductUpdate) -> dict
         export_catalog_json(job, str(out_dir / "catalogo.json"))
         _sync_job_to_storage(job)
 
+    STORE.save(job)
+    _notify_change(job_id)
+    return job_to_public_dict(job)
+
+
+@app.post("/jobs/{job_id}/products", response_model=Job)
+def add_product(job_id: str, file: UploadFile = File(...)) -> dict:
+    """Agrega un producto a un catálogo ya generado, sin tener que rehacer el lote.
+
+    Ruta síncrona (no `async def`): `add_product_to_job` hace rembg + una
+    llamada real al modelo de IA (extracción + replanificación de categorías),
+    varios segundos de trabajo bloqueante — FastAPI corre las rutas `def` en
+    threadpool, así que esto no bloquea el loop de eventos como sí lo haría
+    dentro de una `async def`.
+    """
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+    if job.status != JobStatus.DONE:
+        raise HTTPException(400, "Solo se pueden agregar productos a un catálogo ya generado")
+
+    indir = DATA / upload_original_dir(job_id)
+    indir.mkdir(parents=True, exist_ok=True)
+    dest = indir / (file.filename or f"{uuid.uuid4().hex}.jpg")
+    with dest.open("wb") as fh:
+        shutil.copyfileobj(file.file, fh)
+
+    try:
+        add_product_to_job(job, str(dest), job.background_key)
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    _sync_job_to_storage(job)
     STORE.save(job)
     _notify_change(job_id)
     return job_to_public_dict(job)

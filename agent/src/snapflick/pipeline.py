@@ -119,6 +119,34 @@ def _cached_extract_product_sheet(src: str, agent) -> ProductSheet:
     return sheet
 
 
+def _process_one_image(
+    src: str, background_path: str | None, processed_dir: Path, vision
+) -> tuple[ProcessedImage, ProductSheet | None, str | None]:
+    """Recorte + composición + miniatura + extracción para una sola imagen.
+
+    Devuelve `(imagen_procesada, ficha, None)` si todo salió bien, o
+    `(imagen_procesada, None, mensaje_de_error_amigable)` si falló — el
+    llamador decide qué hacer con el error (job.errors en un lote, o
+    propagarlo directo cuando es un solo producto agregado a mano)."""
+    stem = Path(src).stem
+    img = ProcessedImage(source_path=src)
+    try:
+        img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
+        img.composed_path = compose_on_background(
+            img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
+        )
+        img.thumbnail_path = make_thumbnail(
+            img.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
+        )
+        sheet = _cached_extract_product_sheet(src, agent=vision)
+        return img, sheet, None
+    except Exception as exc:  # una imagen mala no puede tumbar el lote
+        log.exception("Fallo procesando %s", src)
+        friendly = _friendly_error_message(exc)
+        img.error = friendly
+        return img, None, friendly
+
+
 def run_job(
     job: Job,
     image_paths: list[str],
@@ -142,27 +170,14 @@ def run_job(
     vision = build_vision_agent()
 
     for src in image_paths:
-        stem = Path(src).stem
-        img = ProcessedImage(source_path=src)
-        try:
-            img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
-            img.composed_path = compose_on_background(
-                img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
-            )
-            img.thumbnail_path = make_thumbnail(
-                img.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
-            )
-            sheet = _cached_extract_product_sheet(src, agent=vision)
+        img, sheet, err = _process_one_image(src, background_path, processed_dir, vision)
+        if sheet is not None:
             job.products.append(ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img))
-        except Exception as exc:  # una imagen mala no puede tumbar el lote
-            log.exception("Fallo procesando %s", src)
-            friendly = _friendly_error_message(exc)
-            img.error = friendly
-            job.errors.append(f"{Path(src).name}: {friendly}")
-        finally:
-            job.processed_images += 1
-            if on_update:
-                on_update(job)
+        else:
+            job.errors.append(f"{Path(src).name}: {err}")
+        job.processed_images += 1
+        if on_update:
+            on_update(job)
 
     if not job.products:
         job.status = JobStatus.FAILED
@@ -182,3 +197,48 @@ def run_job(
     if on_update:
         on_update(job)
     return job
+
+
+def add_product_to_job(
+    job: Job,
+    image_path: str,
+    background_path: str | None = None,
+    workdir: Path | None = None,
+) -> ProductRecord:
+    """Agrega un producto a un job ya publicado (`job.status == DONE`).
+
+    Vuelve a correr el `CatalogAgent` sobre *todo* el lote (existentes + el
+    nuevo), no solo sobre el producto nuevo — ver "Two agents, not three" en
+    CLAUDE.md: categorizar producto por producto produce categorías casi
+    duplicadas ("Bebida" vs "Bebidas"). Re-renderiza el catálogo antes de
+    devolver el control; el llamador (`main.py`) solo persiste y notifica.
+
+    A diferencia de `run_job`, una imagen que falla acá no se traga en
+    `job.errors` — se propaga como excepción, porque es una acción puntual
+    del administrador que espera una respuesta directa (éxito o error), no
+    parte de un lote donde una imagen mala no debe tumbar las demás.
+    """
+    root = Path(workdir or settings.data_dir)
+    processed_dir = root / upload_processed_dir(job.id)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    cat_dir = root / catalog_dir(job.id)
+
+    vision = build_vision_agent()
+    img, sheet, err = _process_one_image(image_path, background_path, processed_dir, vision)
+    if sheet is None:
+        raise RuntimeError(err or "No se pudo procesar la imagen")
+
+    record = ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img)
+    job.products.append(record)
+    job.total_images += 1
+    job.processed_images += 1
+
+    job.plan = with_retry(plan_catalog, job.products, agent=build_catalog_agent())
+    for a in job.plan.assignments:
+        for p in job.products:
+            if p.id == a.product_id:
+                p.sheet.category = a.category
+
+    job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
+    job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
+    return record

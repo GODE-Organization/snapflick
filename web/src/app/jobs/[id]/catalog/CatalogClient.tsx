@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
+import { AddProductModal } from "@/components/AddProductModal";
 import { Icon } from "@/components/Icon";
 import { ProductEditModal } from "@/components/ProductEditModal";
 import { absoluteUrl, updateCatalog, updateProduct } from "@/lib/api";
@@ -19,6 +20,8 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [titleDraft, setTitleDraft] = useState("");
   const [summaryDraft, setSummaryDraft] = useState("");
   const [savingMeta, setSavingMeta] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<{ file: File; previewUrl: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (error) {
     return (
@@ -97,6 +100,17 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   async function toggleVisibility(product: ProductRecord) {
     const updated = await updateProduct(jobId, product.id, { visible: !product.visible });
     mutate(updated);
+  }
+
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) setPendingUpload({ file, previewUrl: URL.createObjectURL(file) });
+  }
+
+  function closePendingUpload() {
+    if (pendingUpload) URL.revokeObjectURL(pendingUpload.previewUrl);
+    setPendingUpload(null);
   }
 
   return (
@@ -310,6 +324,14 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   ))}
                 </nav>
 
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelected}
+                  className="hidden"
+                />
+
                 <div className={`grid gap-6 ${preview === "mobile" ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"}`}>
                   {filteredProducts.map((p) => {
                     const thumb = absoluteUrl(p.image.thumbnail_path ?? p.image.composed_path);
@@ -361,6 +383,13 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                       </div>
                     );
                   })}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-outline-variant text-on-surface-variant transition-colors hover:border-primary hover:text-primary"
+                  >
+                    <Icon name="add_circle" className="text-4xl" />
+                    <span className="font-mono text-label-md">Agregar producto</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -377,6 +406,20 @@ export function CatalogClient({ jobId }: { jobId: string }) {
             setSelected(updated.products.find((p) => p.id === selected.id) ?? null);
           }}
           onClose={() => setSelected(null)}
+        />
+      )}
+
+      {pendingUpload && (
+        <AddProductModal
+          jobId={jobId}
+          file={pendingUpload.file}
+          previewUrl={pendingUpload.previewUrl}
+          onAdded={(updated) => {
+            mutate(updated);
+            setActiveCategory("Todos");
+            closePendingUpload();
+          }}
+          onClose={closePendingUpload}
         />
       )}
     </AppShell>
