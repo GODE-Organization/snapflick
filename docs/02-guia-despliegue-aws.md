@@ -1,7 +1,39 @@
 # Guía de despliegue en AWS
 
 Guía técnica paso a paso para desplegar SnapFlick en una cuenta de AWS nueva. Asume cero
-experiencia previa con AWS.
+experiencia previa con AWS. Sigue las secciones en orden — cada una asume que la anterior ya
+quedó lista.
+
+## 0. Checklist previo
+
+Verifica esto antes de tocar la consola. Si algo falta, resuélvelo primero; no tiene sentido
+avanzar sin ello.
+
+- [x] **AWS CLI configurado.** `aws sts get-caller-identity` debe devolver un JSON con
+      `Account` y un `Arn` reconocible (el usuario/rol con el que vas a trabajar). Si da error
+      de credenciales, corre `aws configure` antes de seguir (ver sección 1.6).
+- [ ] **Docker instalado y corriendo:** `docker ps` no debe dar error.
+- [ ] **Una sola región en todo el proceso:** `us-east-1` (ver 1.4 — no la cambies a mitad de
+      camino).
+- [ ] **API key del proveedor de modelo a mano** (p. ej. `SNAPFLICK_GEMINI_API_KEY`, ver
+      `agent/.env.example`).
+- [ ] **`.env` en `.gitignore` y ninguna credencial commiteada.**
+- [ ] **Si el repo va a pasar a público en algún momento** (requisito común en hackathons):
+      hacerlo público republica **todo el historial de git**, no solo el estado actual. Borrar
+      una clave después no la quita del historial. Antes de cambiar la visibilidad, revisa:
+      ```bash
+      git log -p | grep -iE "secret|aws_access|api_key|BEGIN (RSA|OPENSSH) PRIVATE KEY"
+      ```
+      Si algo aparece, hay que rotar esa credencial y reescribir el historial (o empezar un
+      repo limpio) antes de publicarlo — no basta con un commit nuevo que la borre.
+
+Dos variables que se repiten en toda la guía. Defínelas una vez por sesión de terminal:
+
+```bash
+export REGION=us-east-1
+export ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+echo $ACCOUNT
+```
 
 ## 1. Cuenta y accesos base
 
@@ -174,31 +206,149 @@ Reemplazo recomendado por AWS para App Runner: mismo contenedor, un solo comando
 simplicidad operativa (Fargate + Application Load Balancer + auto scaling, todo provisto
 automáticamente).
 
+**Prerequisito de red:** Express Mode crea el balanceador en el VPC *default* de la cuenta.
+Casi toda cuenta nueva ya tiene uno; confirma con:
+```bash
+aws ec2 describe-vpcs --filters Name=is-default,Values=true --region $REGION --query 'Vpcs[0].VpcId'
+```
+Si devuelve `null`, créalo con `aws ec2 create-default-vpc --region $REGION` antes de seguir
+(o pasa tus propias subnets al crear el servicio — no cubierto aquí).
+
+#### Paso 0 — Crear los tres roles IAM (una sola vez por cuenta)
+
+Express Mode exige **dos** roles para poder crear el servicio, y el proyecto necesita un
+**tercero** para que el contenedor pueda leer/escribir en S3 (y llamar a Bedrock si se usa ese
+proveedor). Los tres se crean una única vez; los redespliegues posteriores los reutilizan.
+
+```bash
+# 1) Rol de ejecución de tarea (ECS descarga la imagen de ECR y escribe logs en tu nombre)
+aws iam create-role --role-name ecsTaskExecutionRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+aws iam attach-role-policy --role-name ecsTaskExecutionRole \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+# 2) Rol de infraestructura (permite a Express Mode crear el ALB, target group,
+#    security group y auto scaling por ti)
+aws iam create-role --role-name ecsInfrastructureRoleForExpressServices \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "AllowAccessInfrastructureForECSExpressServices",
+      "Effect": "Allow",
+      "Principal": {"Service": "ecs.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+aws iam attach-role-policy --role-name ecsInfrastructureRoleForExpressServices \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
+
+# 3) Rol de tarea (el código de la app: acceso a S3 y, si se usa Bedrock, a InvokeModel)
+#    Reemplaza snapflick-<algo-unico> por el nombre real del bucket (ver sección 2.1)
+aws iam create-role --role-name SnapFlickTaskRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+aws iam put-role-policy --role-name SnapFlickTaskRole --policy-name SnapFlickAppAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+        "Resource": [
+          "arn:aws:s3:::snapflick-<algo-unico>",
+          "arn:aws:s3:::snapflick-<algo-unico>/*"
+        ]
+      },
+      {
+        "Effect": "Allow",
+        "Action": "bedrock:InvokeModel",
+        "Resource": "*"
+      }
+    ]
+  }'
+```
+
+**Nota de AWS:** los roles IAM son "eventually consistent" — si el primer
+`create-express-gateway-service` falla con un error de tipo *"Unable to assume role"* justo
+después de crearlos, espera un minuto y reintenta; no es un error de configuración.
+
+Guarda los tres ARNs (los necesitas en el paso siguiente):
+```bash
+export EXEC_ROLE_ARN=$(aws iam get-role --role-name ecsTaskExecutionRole --query 'Role.Arn' --output text)
+export INFRA_ROLE_ARN=$(aws iam get-role --role-name ecsInfrastructureRoleForExpressServices --query 'Role.Arn' --output text)
+export TASK_ROLE_ARN=$(aws iam get-role --role-name SnapFlickTaskRole --query 'Role.Arn' --output text)
+```
+
+#### Paso 1 — Crear el servicio
+
+Pasa las variables de `agent/.env.example` con sus **nombres exactos** (un nombre mal escrito
+no da error: `Settings` ignora las variables desconocidas y el valor por defecto del código
+queda vigente en silencio — p. ej. `SNAPFLICK_MODEL_ID` no existe, el nombre real es
+`SNAPFLICK_GEMINI_MODEL_ID`).
+
 ```bash
 aws ecs create-express-gateway-service \
-  --execution-role-arn arn:aws:iam::$ACCOUNT:role/ecsTaskExecutionRole \
-  --infrastructure-role-arn arn:aws:iam::$ACCOUNT:role/ecsInfrastructureRoleForExpressServices \
+  --execution-role-arn $EXEC_ROLE_ARN \
+  --infrastructure-role-arn $INFRA_ROLE_ARN \
+  --task-role-arn $TASK_ROLE_ARN \
   --primary-container '{
       "image": "'"$ACCOUNT"'.dkr.ecr.'"$REGION"'.amazonaws.com/snapflick:latest",
-      "containerPort": 8080
+      "containerPort": 8080,
+      "environment": [
+        {"name": "SNAPFLICK_MODEL_PROVIDER", "value": "gemini"},
+        {"name": "SNAPFLICK_GEMINI_API_KEY", "value": "TU_API_KEY_AQUI"},
+        {"name": "SNAPFLICK_GEMINI_MODEL_ID", "value": "gemini-2.5-flash-lite"},
+        {"name": "SNAPFLICK_S3_BUCKET", "value": "snapflick-<algo-unico>"},
+        {"name": "SNAPFLICK_AWS_REGION", "value": "'"$REGION"'"},
+        {"name": "SNAPFLICK_LOG_LEVEL", "value": "INFO"}
+      ]
   }' \
   --service-name snapflick \
   --health-check-path "/ping" \
+  --cpu 1024 \
+  --memory 4096 \
   --scaling-target '{"minTaskCount":1,"maxTaskCount":2}' \
-  --region $REGION
+  --region $REGION \
+  --monitor-resources
 ```
 
-El cpu/memoria de la tarea (ver medición real abajo: ~1.44 GiB de pico) se fija con el
-parámetro correspondiente de `create-express-gateway-service` — confirmar el nombre exacto
-del flag con `aws ecs create-express-gateway-service help` al momento de desplegar (no
-verificado contra una cuenta real en este cambio), apuntando a **1 vCPU / 3–4 GB**.
+**`--cpu`/`--memory` van en las unidades clásicas de Fargate, no en vCPU/GB enteros** —
+`--cpu` es unidades de CPU (`256` = .25 vCPU, `1024` = 1 vCPU) y `--memory` es **MiB**, no GB
+(confirmado en vivo: `--cpu 1 --memory 4` falla con `InvalidParameterException: Invalid
+CPU/Memory combination`, porque eso pide casi nada de CPU y 4 MiB de RAM). `--cpu 1024
+--memory 4096` da 1 vCPU / 4 GiB, con margen holgado sobre el pico real medido más abajo
+(~1.44 GiB). Para 1024 CPU units, la memoria válida va de 2048 a 8192 MiB en pasos de 1024
+(2/3/4/5/6/7/8 GB) — `3072` también serviría si prefieres 3 GB. **No pongas
+`AWS_ACCESS_KEY_ID` ni `AWS_SECRET_ACCESS_KEY`** en `environment` — esas llegan por
+`SnapFlickTaskRole`.
 
-Los dos roles IAM (`ecsTaskExecutionRole`, `ecsInfrastructureRoleForExpressServices`) son
-prerequisito — ver
-[Getting started with ECS Express Mode](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/express-service-getting-started.html)
-para crearlos. El rol de tarea necesita `bedrock:InvokeModel` y, si se usa S3, acceso al
-bucket. Variables de entorno: las de `.env.example`, pasadas en `environment` dentro de
-`--primary-container`.
+`--monitor-resources` deja el comando esperando y mostrando el progreso hasta que el servicio
+queda `ACTIVE`; al terminar imprime el `serviceArn` y la URL — **anota el `serviceArn`**, lo
+necesitas para `infra/scripts/teardown.sh` en la sección 3.1. Si prefieres no esperar, quita
+la flag y consulta el estado después con:
+```bash
+aws ecs describe-express-gateway-service --service-arn <arn-que-guardaste> --region $REGION
+```
+
+Antes de dar la URL por buena, caliéntala una vez — `/ping` responde al instante pero
+**no** carga nada (es el health check); el que precarga rembg y resuelve el proveedor de IA es
+`/warmup`:
+```bash
+curl -X POST https://<url-del-servicio>/warmup
+```
 
 **⚠️ El ALB cobra por hora exista o no tráfico — leer la sección de costos antes de dejarlo
 corriendo.**
@@ -220,7 +370,10 @@ el primer request real. El pico real durante el procesamiento (~1.44 GiB) es el 
 debe guiar el `cpu`/`memory` de `--primary-container`: de la
 [tabla de configuraciones soportadas](https://docs.aws.amazon.com/apprunner/latest/dg/architecture.html#architecture.vcpu-memory)
 (los mismos escalones que usa Fargate/ECS Express Mode), **1 vCPU / 3 GB o 1 vCPU / 4 GB**
-deja margen razonable sobre ese pico; 2 GB se quedaría corto.
+deja margen razonable sobre ese pico; 2 GB se quedaría corto. Al pasarlo al comando de la
+sección anterior, recuerda que `--cpu`/`--memory` de `create-express-gateway-service` no
+aceptan "1" y "4" — van en unidades de Fargate: `--cpu 1024 --memory 3072` (3 GB) o
+`--cpu 1024 --memory 4096` (4 GB).
 
 Para volver a medirlo (p.ej. tras cambiar el modelo de rembg o el tamaño de canvas):
 ```bash
@@ -284,8 +437,15 @@ Bórralo después de cada grabación y en cuanto termine el hackathon; volver a 
 
 ## 4. Antes de exponer la URL públicamente
 
-- [ ] La URL responde desde una red distinta a la de desarrollo (p. ej. datos móviles).
-- [ ] Ninguna clave de acceso quedó en el historial de git (`git log -p | grep -i "aws_secret"`).
+- [ ] El servicio de ECS Express Mode **existe y está `ACTIVE`** (no borrado por el
+      checklist de costos de la sección 3.1 — un servicio borrado devuelve error y la URL
+      queda inservible).
+- [ ] Se hizo un `curl -X POST <url>/warmup` reciente — si no, la primera visita real paga
+      el costo de cargar rembg (~800 ms extra) y de resolver el proveedor de IA.
+- [ ] La URL responde desde una red distinta a la de desarrollo (p. ej. datos móviles, no
+      solo el wifi de casa).
+- [ ] Repo público: se revisó **todo el historial** de git por secretos, no solo el estado
+      actual (ver checklist previo, sección 0).
 - [ ] La alerta de presupuesto no se ha disparado.
 - [ ] CORS, límites de tamaño de archivo y timeouts están configurados razonablemente.
 
