@@ -133,8 +133,14 @@
   }
 
   /* min() acota el ancho de columna a 320px: con auto-fit, una categoría con un solo
-     producto no debe estirar la tarjeta a todo el ancho del contenedor. */
-  .grid { display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(250px, min(320px, 100%))); }
+     producto no debe estirar la tarjeta a todo el ancho del contenedor. `justify-content:
+     center` es necesario porque ese mismo tope hace que, en mobile o en la última fila
+     incompleta, las columnas no llenen el contenedor — sin esto, el grid las deja pegadas
+     a la izquierda (comportamiento por defecto `start`) en vez de centradas. */
+  .grid {
+    display: grid; gap: 24px; justify-content: center;
+    grid-template-columns: repeat(auto-fit, minmax(250px, min(320px, 100%)));
+  }
 
   .card {
     display: flex; flex-direction: column;
