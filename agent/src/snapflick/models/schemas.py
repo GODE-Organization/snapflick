@@ -85,6 +85,11 @@ class CatalogPlan(BaseModel):
 class Job(BaseModel):
     id: str
     status: JobStatus = JobStatus.PENDING
+    # Dueño anónimo del job: el `sf_session` cookie-id que lo creó (ver
+    # `main.py` `session_dependency`). `None` = job creado antes de este
+    # campo existir — se trata como accesible/editable por cualquiera para no
+    # romper catálogos ya publicados en producción.
+    session_id: str | None = None
     background_key: str | None = None
     total_images: int = 0
     processed_images: int = 0

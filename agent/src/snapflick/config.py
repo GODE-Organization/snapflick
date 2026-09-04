@@ -48,5 +48,11 @@ class Settings(BaseSettings):
     max_images_per_job: int = 30
     log_level: str = "INFO"
 
+    # Orígenes permitidos para CORS *con* credenciales (cookie de sesión), separados
+    # por coma. "*" no es válido junto con allow_credentials=True (lo rechaza el
+    # navegador), así que a diferencia del resto de settings esto no tiene un default
+    # abierto — ver main.py `_cors_origins()`.
+    cors_origins: str = "http://localhost:3000"
+
 
 settings = Settings()

@@ -14,10 +14,13 @@ from pathlib import Path
 
 from fastapi import (
     BackgroundTasks,
+    Depends,
     FastAPI,
     File,
     Form,
     HTTPException,
+    Request,
+    Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -58,7 +61,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SnapFlick", version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    # "*" no funciona junto con allow_credentials=True (el navegador lo rechaza) —
+    # necesitamos la cookie de sesión (`sf_session`) viajando en cross-origin
+    # fetch, así que los orígenes deben ser explícitos. Ver Settings.cors_origins.
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 DATA = Path(settings.data_dir)
 DATA.mkdir(parents=True, exist_ok=True)
@@ -75,6 +87,75 @@ JOBS: dict[str, Job] = {j.id: j for j in STORE.all()}  # caché en memoria; STOR
 # click explícito en "Blanco" terminaría aplicando el fondo por defecto de
 # todos modos.
 EXPLICIT_WHITE_BACKGROUND = "__white__"
+
+
+# ---------- sesión anónima (sin login) ----------
+#
+# No hay autenticación: cada navegador se identifica con un id opaco en una
+# cookie httponly. Se usa para (a) filtrar "Catálogos generados" en el home a
+# los del visitante actual y (b) exigir que solo el dueño pueda editar/borrar
+# un job. El catálogo *publicado* (`catalog_html_path`, HTML autocontenido
+# servido por /files o S3) es un archivo estático aparte que nunca pasa por
+# esta cookie — así que sigue siendo accesible por cualquiera con el link,
+# tal como debe ser.
+
+SESSION_COOKIE_NAME = "sf_session"
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 año
+
+
+def _session_cookie_header(session_id: str) -> bytes:
+    """Arma el header `Set-Cookie` (bytes, para el handshake de WebSocket)
+    reusando `Response.set_cookie` en vez de construir el string a mano."""
+    dummy = Response()
+    dummy.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_id,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+    )
+    return dict(dummy.raw_headers)[b"set-cookie"]
+
+
+def session_dependency(request: Request, response: Response) -> str:
+    """Dependency de FastAPI: devuelve el `session_id` de la cookie, creando
+    una nueva (y seteándola en la respuesta) si el visitante no tenía una."""
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        return session_id
+    session_id = uuid.uuid4().hex
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_id,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+    )
+    return session_id
+
+
+def _resolve_ws_session(websocket: WebSocket) -> tuple[str, list[tuple[bytes, bytes]]]:
+    """Como `session_dependency`, pero para WebSocket: no hay `Response` que
+    setear, así que el `Set-Cookie` (si hace falta uno nuevo) se manda como
+    header extra en `WebSocket.accept()`."""
+    session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        return session_id, []
+    session_id = uuid.uuid4().hex
+    return session_id, [(b"set-cookie", _session_cookie_header(session_id))]
+
+
+def _require_owner(job: Job, session_id: str) -> None:
+    """404 (no 403: no confirmamos que el job existe) si `job` tiene dueño y
+    no es el visitante actual. Jobs con `session_id=None` (creados antes de
+    esta cookie existir) quedan abiertos a cualquiera, para no romper
+    catálogos ya publicados en producción."""
+    if job.session_id and job.session_id != session_id:
+        raise HTTPException(404, "Job no encontrado")
 
 
 def _resolve_background_path(key: str | None) -> str | None:
@@ -207,7 +288,9 @@ def _cover_thumbnail(job: Job) -> str | None:
     return None
 
 
-def _job_summaries() -> list[dict]:
+def _job_summaries(session_id: str | None) -> list[dict]:
+    """Lista de jobs para el home, acotada a los del visitante actual (más los
+    jobs legacy sin dueño — ver `_require_owner`)."""
     return [
         {
             "id": j.id,
@@ -219,6 +302,7 @@ def _job_summaries() -> list[dict]:
             "thumbnail_url": _cover_thumbnail(j),
         }
         for j in sorted(JOBS.values(), key=lambda j: j.created_at, reverse=True)
+        if j.session_id is None or j.session_id == session_id
     ]
 
 
@@ -231,22 +315,40 @@ class ConnectionManager:
     """
 
     def __init__(self) -> None:
-        self.list_subscribers: set[WebSocket] = set()
+        # session_id por socket: cada suscriptor de la lista ve solo sus
+        # propios jobs, así que el broadcast no puede compartir un único
+        # payload precalculado entre todos.
+        self.list_subscribers: dict[WebSocket, str] = {}
         self.job_subscribers: dict[str, set[WebSocket]] = {}
 
-    async def connect_list(self, ws: WebSocket) -> None:
-        await ws.accept()
-        self.list_subscribers.add(ws)
-        await ws.send_json(_job_summaries())
+    async def connect_list(
+        self, ws: WebSocket, session_id: str, accept_headers: list[tuple[bytes, bytes]]
+    ) -> None:
+        await ws.accept(headers=accept_headers)
+        self.list_subscribers[ws] = session_id
+        await ws.send_json(_job_summaries(session_id))
 
     def disconnect_list(self, ws: WebSocket) -> None:
-        self.list_subscribers.discard(ws)
+        self.list_subscribers.pop(ws, None)
 
-    async def connect_job(self, ws: WebSocket, job_id: str) -> None:
-        await ws.accept()
+    async def connect_job(
+        self,
+        ws: WebSocket,
+        job_id: str,
+        session_id: str,
+        accept_headers: list[tuple[bytes, bytes]],
+    ) -> bool:
+        """Devuelve False (y cierra el socket) si el job tiene dueño y no es
+        `session_id` — misma regla que `_require_owner` para las rutas REST."""
+        job = JOBS.get(job_id)
+        if job is not None and job.session_id and job.session_id != session_id:
+            await ws.close(code=4404)
+            return False
+        await ws.accept(headers=accept_headers)
         self.job_subscribers.setdefault(job_id, set()).add(ws)
         if job_id in JOBS:
             await ws.send_json(job_to_public_dict(JOBS[job_id]))
+        return True
 
     def disconnect_job(self, ws: WebSocket, job_id: str) -> None:
         subs = self.job_subscribers.get(job_id)
@@ -259,9 +361,13 @@ class ConnectionManager:
     async def broadcast_list(self) -> None:
         if not self.list_subscribers:
             return
-        data = _job_summaries()
-        dead = {ws for ws in self.list_subscribers if not await _try_send(ws, data)}
-        self.list_subscribers -= dead
+        dead = [
+            ws
+            for ws, session_id in self.list_subscribers.items()
+            if not await _try_send(ws, _job_summaries(session_id))
+        ]
+        for ws in dead:
+            self.list_subscribers.pop(ws, None)
 
     async def broadcast_job(self, job_id: str) -> None:
         subs = self.job_subscribers.get(job_id)
@@ -361,6 +467,7 @@ async def create_job(
     background: UploadFile | None = File(None),
     background_key: str | None = Form(None),
     background_keys: str | None = Form(None),
+    session_id: str = Depends(session_dependency),
 ) -> Job:
     """`background`/`background_key` fijan el fondo por defecto del lote.
 
@@ -409,7 +516,7 @@ async def create_job(
         if default_key:
             bg_path = _resolve_background_path(default_key)
 
-    job = Job(id=job_id, total_images=len(paths), background_key=bg_path)
+    job = Job(id=job_id, total_images=len(paths), background_key=bg_path, session_id=session_id)
     JOBS[job_id] = job
     STORE.save(job)
     _notify_change(job_id)
@@ -447,14 +554,16 @@ def _process(
 
 
 @app.get("/jobs/{job_id}", response_model=Job)
-def get_job(job_id: str) -> dict:
+def get_job(job_id: str, session_id: str = Depends(session_dependency)) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
-    return job_to_public_dict(JOBS[job_id])
+    job = JOBS[job_id]
+    _require_owner(job, session_id)
+    return job_to_public_dict(job)
 
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: str) -> dict:
+def delete_job(job_id: str, session_id: str = Depends(session_dependency)) -> dict:
     """Elimina un catálogo por completo: estado (STORE) y artefactos (fotos
     originales, recortes, imágenes compuestas, miniaturas, catalogo.html/json)
     bajo `uploads/<job_id>/` y `catalogs/<job_id>/`. No toca `backgrounds/`
@@ -469,6 +578,7 @@ def delete_job(job_id: str) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
     if job.status in (JobStatus.PENDING, JobStatus.PROCESSING):
         raise HTTPException(400, "No se puede eliminar un lote que todavía se está procesando")
 
@@ -490,10 +600,13 @@ class CatalogMetaUpdate(BaseModel):
 
 
 @app.patch("/jobs/{job_id}", response_model=Job)
-def update_catalog_meta(job_id: str, payload: CatalogMetaUpdate) -> dict:
+def update_catalog_meta(
+    job_id: str, payload: CatalogMetaUpdate, session_id: str = Depends(session_dependency)
+) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
     if not job.plan:
         raise HTTPException(400, "El catálogo todavía no tiene un plan generado")
 
@@ -537,10 +650,16 @@ class ProductUpdate(BaseModel):
 
 
 @app.patch("/jobs/{job_id}/products/{product_id}", response_model=Job)
-def update_product(job_id: str, product_id: str, payload: ProductUpdate) -> dict:
+def update_product(
+    job_id: str,
+    product_id: str,
+    payload: ProductUpdate,
+    session_id: str = Depends(session_dependency),
+) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
     record = next((p for p in job.products if p.id == product_id), None)
     if record is None:
         raise HTTPException(404, "Producto no encontrado")
@@ -572,7 +691,9 @@ def update_product(job_id: str, product_id: str, payload: ProductUpdate) -> dict
 
 
 @app.delete("/jobs/{job_id}/products/{product_id}", response_model=Job)
-def delete_product(job_id: str, product_id: str) -> dict:
+def delete_product(
+    job_id: str, product_id: str, session_id: str = Depends(session_dependency)
+) -> dict:
     """Borra un producto del catálogo (no solo lo oculta, ver `ProductUpdate.visible`).
 
     No borra los archivos de imagen en disco/S3 — solo saca el producto de
@@ -583,6 +704,7 @@ def delete_product(job_id: str, product_id: str) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
     record = next((p for p in job.products if p.id == product_id), None)
     if record is None:
         raise HTTPException(404, "Producto no encontrado")
@@ -604,7 +726,10 @@ def delete_product(job_id: str, product_id: str) -> dict:
 
 @app.post("/jobs/{job_id}/products", response_model=Job)
 def add_product(
-    job_id: str, file: UploadFile = File(...), background_key: str | None = Form(None)
+    job_id: str,
+    file: UploadFile = File(...),
+    background_key: str | None = Form(None),
+    session_id: str = Depends(session_dependency),
 ) -> dict:
     """Agrega un producto a un catálogo ya generado, sin tener que rehacer el lote.
 
@@ -621,6 +746,7 @@ def add_product(
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
     if job.status != JobStatus.DONE:
         raise HTTPException(400, "Solo se pueden agregar productos a un catálogo ya generado")
 
@@ -651,7 +777,10 @@ class ProductBackgroundUpdate(BaseModel):
 
 @app.patch("/jobs/{job_id}/products/{product_id}/background", response_model=Job)
 def update_product_background(
-    job_id: str, product_id: str, payload: ProductBackgroundUpdate
+    job_id: str,
+    product_id: str,
+    payload: ProductBackgroundUpdate,
+    session_id: str = Depends(session_dependency),
 ) -> dict:
     """Cambia el fondo de un producto ya procesado, recomponiendo su imagen.
 
@@ -662,6 +791,7 @@ def update_product_background(
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     job = JOBS[job_id]
+    _require_owner(job, session_id)
 
     bg_path = _resolve_background_path(payload.background_key)
     try:
@@ -678,13 +808,14 @@ def update_product_background(
 
 
 @app.get("/jobs")
-def list_jobs() -> list[dict]:
-    return _job_summaries()
+def list_jobs(session_id: str = Depends(session_dependency)) -> list[dict]:
+    return _job_summaries(session_id)
 
 
 @app.websocket("/ws/jobs")
 async def ws_jobs(websocket: WebSocket) -> None:
-    await manager.connect_list(websocket)
+    session_id, accept_headers = _resolve_ws_session(websocket)
+    await manager.connect_list(websocket, session_id, accept_headers)
     try:
         while True:
             await websocket.receive_text()  # sin mensajes esperados; solo detecta el cierre
@@ -696,7 +827,10 @@ async def ws_jobs(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/jobs/{job_id}")
 async def ws_job(websocket: WebSocket, job_id: str) -> None:
-    await manager.connect_job(websocket, job_id)
+    session_id, accept_headers = _resolve_ws_session(websocket)
+    connected = await manager.connect_job(websocket, job_id, session_id, accept_headers)
+    if not connected:
+        return
     try:
         while True:
             await websocket.receive_text()

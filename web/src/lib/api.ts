@@ -21,6 +21,10 @@ export function absoluteUrl(path: string | null | undefined): string | null {
   return `${API_URL}${path}`;
 }
 
+/** La sesión anónima (`sf_session`) viaja como cookie cross-origin (web y agent
+ * corren en orígenes distintos) — sin esto el navegador ni la manda ni la guarda. */
+const WITH_SESSION: RequestInit = { credentials: "include" };
+
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -49,7 +53,7 @@ export async function createJob({
   if (backgroundKey) form.append("background_key", backgroundKey);
   if (backgroundKeys?.some((k) => k)) form.append("background_keys", JSON.stringify(backgroundKeys));
 
-  const res = await fetch(`${API_URL}/jobs`, { method: "POST", body: form });
+  const res = await fetch(`${API_URL}/jobs`, { ...WITH_SESSION, method: "POST", body: form });
   return asJson(res);
 }
 
@@ -59,6 +63,7 @@ export async function updateProduct(
   patch: Partial<ProductSheet> & { visible?: boolean },
 ): Promise<Job> {
   const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, {
+    ...WITH_SESSION,
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -70,12 +75,19 @@ export async function addProduct(jobId: string, file: File, backgroundKey?: stri
   const form = new FormData();
   form.append("file", file);
   if (backgroundKey) form.append("background_key", backgroundKey);
-  const res = await fetch(`${API_URL}/jobs/${jobId}/products`, { method: "POST", body: form });
+  const res = await fetch(`${API_URL}/jobs/${jobId}/products`, {
+    ...WITH_SESSION,
+    method: "POST",
+    body: form,
+  });
   return asJson(res);
 }
 
 export async function deleteProduct(jobId: string, productId: string): Promise<Job> {
-  const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, { method: "DELETE" });
+  const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, {
+    ...WITH_SESSION,
+    method: "DELETE",
+  });
   return asJson(res);
 }
 
@@ -85,6 +97,7 @@ export async function updateProductBackground(
   backgroundKey: string | null,
 ): Promise<Job> {
   const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}/background`, {
+    ...WITH_SESSION,
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ background_key: backgroundKey }),
@@ -99,6 +112,7 @@ export interface CatalogMetaPatch {
 
 export async function updateCatalog(jobId: string, patch: CatalogMetaPatch): Promise<Job> {
   const res = await fetch(`${API_URL}/jobs/${jobId}`, {
+    ...WITH_SESSION,
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -107,7 +121,7 @@ export async function updateCatalog(jobId: string, patch: CatalogMetaPatch): Pro
 }
 
 export async function deleteJob(jobId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/jobs/${jobId}`, { method: "DELETE" });
+  const res = await fetch(`${API_URL}/jobs/${jobId}`, { ...WITH_SESSION, method: "DELETE" });
   await asJson(res);
 }
 
