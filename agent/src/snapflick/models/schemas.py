@@ -48,6 +48,16 @@ class ProcessedImage(BaseModel):
     composed_path: str | None = None  # JPG sobre fondo de marca
     thumbnail_path: str | None = None
     error: str | None = None
+    version: int = Field(
+        default=1,
+        description=(
+            "Se incrementa cada vez que se recompone la imagen (p.ej. al cambiar "
+            "de fondo) sin cambiar de nombre de archivo. main.py lo agrega como "
+            "`?v=` a las URLs de disco local para invalidar el caché del "
+            "navegador — sin esto, el <img> de las vistas de administración "
+            "sigue mostrando el archivo viejo aunque el de disco ya cambió."
+        ),
+    )
 
 
 class ProductRecord(BaseModel):

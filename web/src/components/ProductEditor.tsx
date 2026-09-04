@@ -164,10 +164,10 @@ export const ProductEditor = forwardRef<
         Estás editando los detalles del producto
       </div>
 
-      <div className="flex items-center justify-between rounded-lg bg-surface-container p-4">
-        <div className="flex items-center gap-2">
-          <Icon name={visible ? "visibility" : "visibility_off"} className="text-on-surface-variant" />
-          <div>
+      <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-container p-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon name={visible ? "visibility" : "visibility_off"} className="shrink-0 text-on-surface-variant" />
+          <div className="min-w-0">
             <p className="text-body-md text-on-background">Visible en el catálogo</p>
             <p className="text-body-sm text-on-surface-variant">
               {visible ? "Los clientes pueden ver este producto." : "Oculto: no aparece en el catálogo publicado."}
@@ -179,11 +179,11 @@ export const ProductEditor = forwardRef<
           role="switch"
           aria-checked={visible}
           onClick={() => setVisible((v) => !v)}
-          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${visible ? "bg-primary" : "bg-outline-variant"}`}
+          className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors ${visible ? "bg-primary" : "bg-outline-variant"}`}
         >
           <span
-            className={`absolute top-0.5 h-6 w-6 rounded-full bg-surface shadow-md transition-transform ${
-              visible ? "translate-x-5" : "translate-x-0.5"
+            className={`h-6 w-6 rounded-full bg-surface shadow-md transition-transform ${
+              visible ? "translate-x-5" : "translate-x-0"
             }`}
           />
         </button>
