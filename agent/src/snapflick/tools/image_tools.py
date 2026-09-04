@@ -88,8 +88,16 @@ def compose_on_background(cutout_path: str, background_path: str | None, output_
     x = (size - product.width) // 2
     y = (size - product.height) // 2
 
+    # Sombra = silueta del producto en negro, semitransparente y desenfocada.
+    # El canal alfa atenuado va como MÁSCARA del paste (no como imagen): sin
+    # máscara, Pillow convierte la "L" a RGBA opaca y pega una caja negra del
+    # tamaño del bounding box en vez de una sombra con la forma del producto.
     shadow = Image.new("RGBA", bg.size, (0, 0, 0, 0))
-    shadow.paste(product.split()[-1].point(lambda a: int(a * 0.35)), (x, y + 12))
+    shadow.paste(
+        Image.new("RGBA", product.size, (0, 0, 0, 255)),
+        (x, y + 12),
+        product.split()[-1].point(lambda a: int(a * 0.35)),
+    )
     shadow = shadow.filter(ImageFilter.GaussianBlur(18))
     canvas = Image.alpha_composite(bg.convert("RGBA"), shadow)
     canvas.paste(product, (x, y), product)
