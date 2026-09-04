@@ -58,6 +58,10 @@ class ProductRecord(BaseModel):
         default=True,
         description="Si es False, el producto se oculta del catálogo publicado sin borrarlo.",
     )
+    background_key: str | None = Field(
+        default=None,
+        description="Path del fondo de marca compuesto sobre este producto. None = fondo blanco.",
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

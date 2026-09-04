@@ -22,6 +22,15 @@ def test_sqlite_job_store_roundtrip(tmp_path: Path):
     assert store.all() == [loaded]
 
 
+def test_sqlite_job_store_delete(tmp_path: Path):
+    store = SqliteJobStore(tmp_path / "jobs.db")
+    store.save(Job(id="job-1", total_images=1))
+
+    store.delete("job-1")
+
+    assert store.get("job-1") is None
+
+
 class _FakeBody:
     def __init__(self, data: bytes):
         self._data = data
@@ -60,6 +69,9 @@ class _FakeS3Client:
         assert name == "list_objects_v2"
         return _FakePaginator(self)
 
+    def delete_object(self, Bucket, Key):  # noqa: N803
+        self.objects.pop(Key, None)
+
 
 def _fake_job_store(monkeypatch) -> S3JobStore:
     fake_client = _FakeS3Client()
@@ -82,6 +94,15 @@ def test_s3_job_store_roundtrip(monkeypatch):
     assert loaded is not None
     assert loaded.id == "job-s3"
     assert store.client.objects["jobs/job-s3.json"] == job.model_dump_json().encode("utf-8")
+
+
+def test_s3_job_store_delete(monkeypatch):
+    store = _fake_job_store(monkeypatch)
+    store.save(Job(id="job-s3", total_images=1))
+
+    store.delete("job-s3")
+
+    assert store.get("job-s3") is None
 
 
 def test_s3_job_store_get_missing_returns_none(monkeypatch):

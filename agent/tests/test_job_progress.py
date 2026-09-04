@@ -50,6 +50,12 @@ def _fake_make_thumbnail(image_path, output_path) -> str:
     return output_path
 
 
+def _fake_keep_original(image_path, output_path) -> str:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"fake-original")
+    return output_path
+
+
 def test_run_job_muta_el_mismo_objeto_que_recibe(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "remove_background", _fake_remove_background)
     monkeypatch.setattr(pipeline_module, "compose_on_background", _fake_compose_on_background)
@@ -145,6 +151,74 @@ def test_run_job_reusa_el_cache_de_extraccion_para_la_misma_imagen(tmp_path, mon
     assert calls["n"] == 1, "la segunda corrida con la misma imagen debió reutilizar el caché"
     assert len(job1.products) == 1
     assert len(job2.products) == 1
+
+
+def test_run_job_asigna_fondo_por_imagen(tmp_path, monkeypatch):
+    """`per_image_backgrounds` debe ganarle al `background_path` por defecto
+    para las fotos que sí aparecen en el mapa, y las demás deben caer de
+    vuelta al default — así cada producto del lote puede llevar un fondo
+    distinto."""
+    monkeypatch.setattr(pipeline_module, "remove_background", _fake_remove_background)
+    monkeypatch.setattr(pipeline_module, "compose_on_background", _fake_compose_on_background)
+    monkeypatch.setattr(pipeline_module, "make_thumbnail", _fake_make_thumbnail)
+    monkeypatch.setattr(pipeline_module, "extract_product_sheet", _fake_extract_product_sheet)
+    monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
+    monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
+    monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+
+    image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(2)]
+    for p in image_paths:
+        Path(p).write_bytes(b"fake-source")
+
+    job = Job(id="job-per-image-bg", total_images=2)
+    pipeline_module.run_job(
+        job,
+        image_paths,
+        background_path="/default/bg.jpg",
+        workdir=tmp_path,
+        per_image_backgrounds={image_paths[0]: "/other/bg.jpg"},
+    )
+
+    by_source = {p.image.source_path: p for p in job.products}
+    assert by_source[image_paths[0]].background_key == "/other/bg.jpg"
+    assert by_source[image_paths[1]].background_key == "/default/bg.jpg"
+
+
+def test_run_job_mantener_original_no_llama_a_remove_background(tmp_path, monkeypatch):
+    """`KEEP_ORIGINAL_BACKGROUND` debe saltarse rembg y `compose_on_background`
+    por completo — la foto se usa tal cual."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("no debería llamar a remove_background en modo 'mantener original'")
+
+    monkeypatch.setattr(pipeline_module, "remove_background", _boom)
+    monkeypatch.setattr(pipeline_module, "compose_on_background", _boom)
+    monkeypatch.setattr(pipeline_module, "keep_original", _fake_keep_original)
+    monkeypatch.setattr(pipeline_module, "make_thumbnail", _fake_make_thumbnail)
+    monkeypatch.setattr(pipeline_module, "extract_product_sheet", _fake_extract_product_sheet)
+    monkeypatch.setattr(pipeline_module, "plan_catalog", _fake_plan_catalog)
+    monkeypatch.setattr(pipeline_module, "build_vision_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "build_catalog_agent", lambda: None)
+    monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
+    monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
+    monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+
+    image_path = tmp_path / "foto.jpg"
+    image_path.write_bytes(b"fake-source")
+
+    job = Job(id="job-keep-original", total_images=1)
+    pipeline_module.run_job(
+        job,
+        [str(image_path)],
+        background_path=pipeline_module.KEEP_ORIGINAL_BACKGROUND,
+        workdir=tmp_path,
+    )
+
+    assert job.products[0].background_key == pipeline_module.KEEP_ORIGINAL_BACKGROUND
+    assert job.products[0].image.cutout_path is None
 
 
 def test_cache_key_cambia_si_cambia_el_prompt_o_el_proveedor(monkeypatch):

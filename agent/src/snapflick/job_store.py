@@ -32,6 +32,9 @@ class JobStateStore(ABC):
     @abstractmethod
     def all(self) -> list[Job]: ...
 
+    @abstractmethod
+    def delete(self, job_id: str) -> None: ...
+
 
 class SqliteJobStore(JobStateStore):
     def __init__(self, db_path: str | Path) -> None:
@@ -45,6 +48,9 @@ class SqliteJobStore(JobStateStore):
 
     def all(self) -> list[Job]:
         return self._backend.all()
+
+    def delete(self, job_id: str) -> None:
+        self._backend.delete(job_id)
 
 
 class S3JobStore(JobStateStore):
@@ -90,6 +96,9 @@ class S3JobStore(JobStateStore):
                 obj = self.client.get_object(Bucket=self.bucket, Key=entry["Key"])
                 jobs.append(Job.model_validate_json(obj["Body"].read()))
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+
+    def delete(self, job_id: str) -> None:
+        self.client.delete_object(Bucket=self.bucket, Key=job_state_key(job_id))
 
 
 def get_job_store() -> JobStateStore:

@@ -1,17 +1,19 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { AddProductModal } from "@/components/AddProductModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
 import { ProductEditModal } from "@/components/ProductEditModal";
-import { absoluteUrl, addProduct, deleteProduct, updateCatalog } from "@/lib/api";
+import { absoluteUrl, addProduct, deleteJob, deleteProduct, updateCatalog } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
 import type { Job, ProductRecord } from "@/lib/types";
 
 export function CatalogClient({ jobId }: { jobId: string }) {
+  const router = useRouter();
   const { data: job, error, mutate } = useJob(jobId);
   const [selected, setSelected] = useState<ProductRecord | null>(null);
   const [copied, setCopied] = useState(false);
@@ -26,6 +28,8 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     uploadPromise: Promise<Job>;
   } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProductRecord | null>(null);
+  const [pendingDeleteCatalog, setPendingDeleteCatalog] = useState(false);
+  const [deletingCatalog, setDeletingCatalog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (error) {
@@ -109,6 +113,16 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     const updated = await deleteProduct(jobId, product.id);
     mutate(updated);
     if (selected?.id === product.id) setSelected(null);
+  }
+
+  async function confirmDeleteCatalog() {
+    setDeletingCatalog(true);
+    try {
+      await deleteJob(jobId);
+      router.push("/");
+    } finally {
+      setDeletingCatalog(false);
+    }
   }
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -306,6 +320,16 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                     </a>
                   </>
                 )}
+
+                <div className="h-px w-full bg-surface-container-highest" />
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteCatalog(true)}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-error/30 py-3 font-mono text-label-md text-error transition-colors hover:bg-error hover:text-on-error"
+                >
+                  <Icon name="delete" className="text-[18px]" />
+                  Eliminar catálogo
+                </button>
               </div>
             </div>
 
@@ -443,6 +467,16 @@ export function CatalogClient({ jobId }: { jobId: string }) {
           confirmLabel="Eliminar"
           onConfirm={confirmDeleteProduct}
           onCancel={() => setPendingDelete(null)}
+        />
+      )}
+
+      {pendingDeleteCatalog && (
+        <ConfirmDialog
+          title="Eliminar catálogo"
+          message={`¿Eliminar "${job.plan?.catalog_title ?? job.id}"? Se borrarán las fotos, imágenes generadas y el catálogo publicado. Esta acción no se puede deshacer.`}
+          confirmLabel={deletingCatalog ? "Eliminando…" : "Eliminar"}
+          onConfirm={confirmDeleteCatalog}
+          onCancel={() => setPendingDeleteCatalog(false)}
         />
       )}
     </AppShell>

@@ -42,6 +42,22 @@ def test_get_missing_returns_none(tmp_path: Path):
     assert store.get("does-not-exist") is None
 
 
+def test_delete_removes_the_row(tmp_path: Path):
+    store = JobStore(tmp_path / "jobs.db")
+    store.save(Job(id="job-1", total_images=1))
+    store.save(Job(id="job-2", total_images=1))
+
+    store.delete("job-1")
+
+    assert store.get("job-1") is None
+    assert [j.id for j in store.all()] == ["job-2"]
+
+
+def test_delete_missing_no_op(tmp_path: Path):
+    store = JobStore(tmp_path / "jobs.db")
+    store.delete("does-not-exist")  # no debe lanzar
+
+
 def test_all_survives_reopening_the_store(tmp_path: Path):
     """Simula un reinicio del proceso: un JobStore nuevo apuntando al mismo
     archivo debe ver los jobs guardados por una instancia anterior."""

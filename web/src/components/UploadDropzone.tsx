@@ -1,25 +1,46 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { EXPLICIT_WHITE_BACKGROUND, KEEP_ORIGINAL_BACKGROUND } from "@/lib/api";
+import type { BackgroundOption } from "@/lib/types";
+import { BackgroundPickerModal } from "./BackgroundPickerModal";
 import { Icon } from "./Icon";
 
 export function UploadDropzone({
   files,
   onChange,
+  backgrounds = [],
+  fileBackgrounds = [],
+  onFileBackgroundsChange,
 }: {
   files: File[];
   onChange: (files: File[]) => void;
+  backgrounds?: BackgroundOption[];
+  fileBackgrounds?: (string | null)[];
+  onFileBackgroundsChange?: (next: (string | null)[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
-    onChange([...files, ...Array.from(list)]);
+    const added = Array.from(list);
+    onChange([...files, ...added]);
+    onFileBackgroundsChange?.([...fileBackgrounds, ...added.map(() => null)]);
   }
 
   function removeAt(index: number) {
     onChange(files.filter((_, i) => i !== index));
+    onFileBackgroundsChange?.(fileBackgrounds.filter((_, i) => i !== index));
+    setPickerIndex((current) => {
+      if (current === null || current === index) return null;
+      return current > index ? current - 1 : current;
+    });
+  }
+
+  function setBackgroundAt(index: number, key: string | null) {
+    onFileBackgroundsChange?.(fileBackgrounds.map((k, i) => (i === index ? key : k)));
   }
 
   return (
@@ -81,27 +102,56 @@ export function UploadDropzone({
         <div className="mt-4">
           <p className="mb-2 font-mono text-label-sm text-on-surface-variant">
             {files.length} foto{files.length === 1 ? "" : "s"} seleccionada{files.length === 1 ? "" : "s"}
+            {" · elige un fondo distinto por foto si quieres"}
           </p>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {files.map((file, i) => (
-              <div key={`${file.name}-${i}`} className="group relative aspect-square overflow-hidden rounded-lg bg-surface-container-low">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={URL.createObjectURL(file)} alt={file.name} className="h-full w-full object-cover" />
+              <div key={`${file.name}-${i}`} className="group relative overflow-hidden rounded-lg bg-surface-container-low">
+                <div className="relative aspect-square">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={URL.createObjectURL(file)} alt={file.name} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeAt(i);
+                    }}
+                    className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-inverse-surface/70 text-inverse-on-surface opacity-0 transition group-hover:opacity-100"
+                    aria-label={`Quitar ${file.name}`}
+                  >
+                    <Icon name="close" className="text-[14px]" />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    removeAt(i);
+                    setPickerIndex(i);
                   }}
-                  className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-inverse-surface/70 text-inverse-on-surface opacity-0 transition group-hover:opacity-100"
-                  aria-label={`Quitar ${file.name}`}
+                  className="flex w-full items-center gap-1.5 truncate bg-surface-container-high px-2 py-1.5 text-left font-mono text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest"
                 >
-                  <Icon name="close" className="text-[14px]" />
+                  <Icon name="wallpaper" className="text-[16px] shrink-0" />
+                  <span className="truncate">
+                    {fileBackgrounds[i] === KEEP_ORIGINAL_BACKGROUND
+                      ? "Mantener original"
+                      : fileBackgrounds[i] === EXPLICIT_WHITE_BACKGROUND
+                        ? "Fondo blanco"
+                        : (fileBackgrounds[i] ?? "Fondo por defecto")}
+                  </span>
                 </button>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {pickerIndex !== null && (
+        <BackgroundPickerModal
+          backgrounds={backgrounds}
+          selected={fileBackgrounds[pickerIndex] ?? null}
+          onSelect={(key) => setBackgroundAt(pickerIndex, key)}
+          onClose={() => setPickerIndex(null)}
+        />
       )}
     </section>
   );

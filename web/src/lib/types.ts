@@ -34,6 +34,7 @@ export interface ProductRecord {
   sheet: ProductSheet;
   image: ProcessedImage;
   visible: boolean;
+  background_key: string | null;
   created_at: string;
 }
 
@@ -77,4 +78,5 @@ export interface JobSummary {
 export interface BackgroundOption {
   background_key: string;
   url: string;
+  is_default: boolean;
 }

@@ -28,6 +28,9 @@ class Storage(ABC):
     @abstractmethod
     def list_keys(self, prefix: str) -> list[str]: ...
 
+    @abstractmethod
+    def delete_prefix(self, prefix: str) -> None: ...
+
 
 class LocalStorage(Storage):
     def __init__(self, root: Path | None = None):
@@ -62,6 +65,13 @@ class LocalStorage(Storage):
             for f in sorted(base.iterdir())
             if f.is_file()
         ]
+
+    def delete_prefix(self, prefix: str) -> None:
+        target = self.root / prefix
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
 
 
 class S3Storage(Storage):
@@ -102,6 +112,17 @@ class S3Storage(Storage):
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             keys += [obj["Key"] for obj in page.get("Contents", [])]
         return keys
+
+    def delete_prefix(self, prefix: str) -> None:
+        keys = self.list_keys(prefix)
+        if not keys:
+            return
+        # `delete_objects` acepta hasta 1000 keys por llamada.
+        for i in range(0, len(keys), 1000):
+            batch = keys[i : i + 1000]
+            self.client.delete_objects(
+                Bucket=self.bucket, Delete={"Objects": [{"Key": k} for k in batch]}
+            )
 
 
 def get_storage() -> Storage:

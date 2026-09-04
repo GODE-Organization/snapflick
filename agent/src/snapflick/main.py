@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
+import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -28,8 +30,13 @@ from .config import settings
 from .job_store import get_job_store
 from .model_provider import warmup_model
 from .models.schemas import Job, JobStatus
-from .paths import background_key, upload_original_dir
-from .pipeline import add_product_to_job, run_job
+from .paths import background_key, catalog_dir, upload_original_dir
+from .pipeline import (
+    KEEP_ORIGINAL_BACKGROUND,
+    add_product_to_job,
+    recompose_product_background,
+    run_job,
+)
 from .tools.catalog_tools import export_catalog_json, render_catalog_html
 from .tools.image_tools import _get_session as _get_rembg_session
 from .tools.storage_tools import get_storage
@@ -59,6 +66,67 @@ app.mount("/files", StaticFiles(directory=str(DATA)), name="files")
 
 STORE = get_job_store()  # SQLite local, o S3 (jobs/<id>.json) con SNAPFLICK_S3_BUCKET
 JOBS: dict[str, Job] = {j.id: j for j in STORE.all()}  # caché en memoria; STORE es la fuente
+
+
+# Sentinel de `background_key` para "blanco, explícitamente elegido por el
+# usuario" — distinto de `None`/ausente, que en `create_job` cae de vuelta al
+# fondo marcado como "Por defecto" (ver `_get_default_background_key`). Sin
+# esto, "Blanco" y "no elegí nada" serían indistinguibles en el payload y un
+# click explícito en "Blanco" terminaría aplicando el fondo por defecto de
+# todos modos.
+EXPLICIT_WHITE_BACKGROUND = "__white__"
+
+
+def _resolve_background_path(key: str | None) -> str | None:
+    """Convierte un `background_key` guardado (p.ej. `"abc123_playa.jpg"`, tal
+    como lo devuelve `GET /backgrounds`) en el path de filesystem bajo DATA.
+
+    `KEEP_ORIGINAL_BACKGROUND` y `EXPLICIT_WHITE_BACKGROUND` son sentinels, no
+    keys guardadas — el primero se devuelve tal cual para que `pipeline.py` lo
+    reconozca, el segundo se resuelve a `None` (blanco)."""
+    if not key:
+        return None
+    if key == KEEP_ORIGINAL_BACKGROUND:
+        return KEEP_ORIGINAL_BACKGROUND
+    if key == EXPLICIT_WHITE_BACKGROUND:
+        return None
+    return str(DATA / background_key(key))
+
+
+def _background_key_url(key: str | None) -> str | None:
+    """Como `_to_url`, pero preserva `KEEP_ORIGINAL_BACKGROUND` en vez de
+    tratarlo como un path de filesystem (no lo es, así que `_to_url` lo
+    convertiría en `None` y el frontend perdería la distinción entre "sin
+    fondo elegido" y "mantener el fondo original")."""
+    if key == KEEP_ORIGINAL_BACKGROUND:
+        return KEEP_ORIGINAL_BACKGROUND
+    return _to_url(key)
+
+
+_DEFAULT_BACKGROUND_STORAGE_KEY = "backgrounds/_default.json"
+
+
+def _get_default_background_key() -> str | None:
+    """Key del fondo guardado marcado como "Por defecto" (ver `PUT
+    /backgrounds/default`), o `None` si no se marcó ninguno. Se guarda como un
+    JSON chico en `Storage` (no en `Job`/SQLite) porque es un ajuste del pool
+    de fondos compartido entre jobs, no de un job en particular."""
+    storage = get_storage()
+    if not storage.exists(_DEFAULT_BACKGROUND_STORAGE_KEY):
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / "default.json"
+        storage.fetch(_DEFAULT_BACKGROUND_STORAGE_KEY, str(dest))
+        data = json.loads(dest.read_text(encoding="utf-8"))
+        return data.get("background_key")
+
+
+def _set_default_background_key(key: str | None) -> None:
+    storage = get_storage()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "default.json"
+        src.write_text(json.dumps({"background_key": key}), encoding="utf-8")
+        storage.save(str(src), _DEFAULT_BACKGROUND_STORAGE_KEY)
 
 
 def _relative_key(path: str) -> str | None:
@@ -103,6 +171,7 @@ def _sync_job_to_storage(job: Job) -> None:
     for record in job.products:
         img = record.image
         candidates += [img.source_path, img.cutout_path, img.composed_path, img.thumbnail_path]
+        candidates.append(record.background_key)
     for path in candidates:
         if not path:
             continue
@@ -117,7 +186,7 @@ def _sync_job_to_storage(job: Job) -> None:
 
 def job_to_public_dict(job: Job) -> dict:
     data = job.model_dump(mode="json")
-    data["background_key"] = _to_url(job.background_key)
+    data["background_key"] = _background_key_url(job.background_key)
     data["catalog_html_path"] = _to_url(job.catalog_html_path)
     data["catalog_json_path"] = _to_url(job.catalog_json_path)
     for product, record in zip(data["products"], job.products, strict=True):
@@ -126,6 +195,7 @@ def job_to_public_dict(job: Job) -> dict:
         img["cutout_path"] = _to_url(record.image.cutout_path)
         img["composed_path"] = _to_url(record.image.composed_path)
         img["thumbnail_path"] = _to_url(record.image.thumbnail_path)
+        product["background_key"] = _background_key_url(record.background_key)
     return data
 
 
@@ -290,20 +360,40 @@ async def create_job(
     files: list[UploadFile] = File(...),
     background: UploadFile | None = File(None),
     background_key: str | None = Form(None),
+    background_keys: str | None = Form(None),
 ) -> Job:
+    """`background`/`background_key` fijan el fondo por defecto del lote.
+
+    `background_keys`, si se manda, es un JSON array del mismo largo que
+    `files` con el `background_key` guardado que le corresponde a cada foto
+    (o `null` para dejarla en el fondo por defecto) — así cada producto del
+    lote puede llevar un fondo distinto en vez de forzar uno solo para todos.
+    """
     if len(files) > settings.max_images_per_job:
         raise HTTPException(400, f"Máximo {settings.max_images_per_job} imágenes por job")
+
+    per_file_keys: list[str | None] = []
+    if background_keys:
+        try:
+            per_file_keys = json.loads(background_keys)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, "background_keys debe ser un JSON array") from exc
+        if len(per_file_keys) != len(files):
+            raise HTTPException(400, "background_keys debe tener un elemento por cada archivo")
 
     job_id = uuid.uuid4().hex[:12]
     indir = DATA / upload_original_dir(job_id)
     indir.mkdir(parents=True, exist_ok=True)
 
     paths: list[str] = []
-    for f in files:
+    per_image_backgrounds: dict[str, str | None] = {}
+    for i, f in enumerate(files):
         dest = indir / (f.filename or f"{uuid.uuid4().hex}.jpg")
         with dest.open("wb") as fh:
             shutil.copyfileobj(f.file, fh)
         paths.append(str(dest))
+        if per_file_keys and per_file_keys[i]:
+            per_image_backgrounds[str(dest)] = _resolve_background_path(per_file_keys[i])
 
     bg_path: str | None = None
     if background is not None:
@@ -311,13 +401,19 @@ async def create_job(
         with open(bg_path, "wb") as fh:
             shutil.copyfileobj(background.file, fh)
     elif background_key:
-        bg_path = str(DATA / "backgrounds" / background_key)
+        bg_path = _resolve_background_path(background_key)
+    else:
+        # Sin elección explícita: cae al fondo marcado como "Por defecto"
+        # (ver PUT /backgrounds/default), si hay uno.
+        default_key = _get_default_background_key()
+        if default_key:
+            bg_path = _resolve_background_path(default_key)
 
     job = Job(id=job_id, total_images=len(paths), background_key=bg_path)
     JOBS[job_id] = job
     STORE.save(job)
     _notify_change(job_id)
-    background_tasks.add_task(_process, job_id, paths, bg_path)
+    background_tasks.add_task(_process, job_id, paths, bg_path, per_image_backgrounds)
     return job_to_public_dict(job)
 
 
@@ -326,10 +422,21 @@ def _persist_and_notify(job: Job) -> None:
     _notify_change(job.id)
 
 
-def _process(job_id: str, paths: list[str], bg: str | None) -> None:
+def _process(
+    job_id: str,
+    paths: list[str],
+    bg: str | None,
+    per_image_backgrounds: dict[str, str | None] | None = None,
+) -> None:
     job = JOBS[job_id]
     try:
-        run_job(job, paths, bg, on_update=_persist_and_notify)
+        run_job(
+            job,
+            paths,
+            bg,
+            on_update=_persist_and_notify,
+            per_image_backgrounds=per_image_backgrounds,
+        )
         _sync_job_to_storage(job)
     except Exception as exc:
         job.status = JobStatus.FAILED
@@ -344,6 +451,35 @@ def get_job(job_id: str) -> dict:
     if job_id not in JOBS:
         raise HTTPException(404, "Job no encontrado")
     return job_to_public_dict(JOBS[job_id])
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str) -> dict:
+    """Elimina un catálogo por completo: estado (STORE) y artefactos (fotos
+    originales, recortes, imágenes compuestas, miniaturas, catalogo.html/json)
+    bajo `uploads/<job_id>/` y `catalogs/<job_id>/`. No toca `backgrounds/`
+    (son un pool compartido entre jobs).
+
+    Bloqueado mientras el job está `pending`/`processing`: `_process` sigue
+    corriendo en un hilo de `BackgroundTasks` con una referencia directa al
+    mismo objeto `Job` (ver "Job mutation, not replacement" en CLAUDE.md), y
+    seguiría llamando `STORE.save`/`_sync_job_to_storage` después de borrarlo
+    acá, resucitando el registro y los archivos a medio borrar.
+    """
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+    if job.status in (JobStatus.PENDING, JobStatus.PROCESSING):
+        raise HTTPException(400, "No se puede eliminar un lote que todavía se está procesando")
+
+    del JOBS[job_id]
+    STORE.delete(job_id)
+    storage = get_storage()
+    storage.delete_prefix(f"uploads/{job_id}/")
+    storage.delete_prefix(f"{catalog_dir(job_id)}/")
+
+    _notify_change(job_id)
+    return {"id": job_id, "deleted": True}
 
 
 class CatalogMetaUpdate(BaseModel):
@@ -467,8 +603,14 @@ def delete_product(job_id: str, product_id: str) -> dict:
 
 
 @app.post("/jobs/{job_id}/products", response_model=Job)
-def add_product(job_id: str, file: UploadFile = File(...)) -> dict:
+def add_product(
+    job_id: str, file: UploadFile = File(...), background_key: str | None = Form(None)
+) -> dict:
     """Agrega un producto a un catálogo ya generado, sin tener que rehacer el lote.
+
+    `background_key` es opcional — si no se manda, cae de vuelta al fondo por
+    defecto del job (`job.background_key`), igual que antes de soportar
+    fondos por producto.
 
     Ruta síncrona (no `async def`): `add_product_to_job` hace rembg + una
     llamada real al modelo de IA (extracción + replanificación de categorías),
@@ -488,9 +630,45 @@ def add_product(job_id: str, file: UploadFile = File(...)) -> dict:
     with dest.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
 
+    bg_path = _resolve_background_path(background_key) if background_key else job.background_key
     try:
-        add_product_to_job(job, str(dest), job.background_key)
+        add_product_to_job(job, str(dest), bg_path)
     except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    _sync_job_to_storage(job)
+    STORE.save(job)
+    _notify_change(job_id)
+    return job_to_public_dict(job)
+
+
+class ProductBackgroundUpdate(BaseModel):
+    """`background_key` guardado (ver `GET /backgrounds`), o `None` para
+    fondo blanco."""
+
+    background_key: str | None = None
+
+
+@app.patch("/jobs/{job_id}/products/{product_id}/background", response_model=Job)
+def update_product_background(
+    job_id: str, product_id: str, payload: ProductBackgroundUpdate
+) -> dict:
+    """Cambia el fondo de un producto ya procesado, recomponiendo su imagen.
+
+    A diferencia de `update_product` (campos de la ficha extraída), esto solo
+    toca la imagen — reutiliza el recorte (`image.cutout_path`) ya calculado
+    por rembg, sin volver a llamar al modelo de IA.
+    """
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+
+    bg_path = _resolve_background_path(payload.background_key)
+    try:
+        recompose_product_background(job, product_id, bg_path)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
         raise HTTPException(422, str(exc)) from exc
 
     _sync_job_to_storage(job)
@@ -541,7 +719,7 @@ async def upload_background(file: UploadFile = File(...)) -> dict:
             get_storage().save(str(dest), background_key(key))
         except Exception:
             log.exception("No se pudo subir el fondo %s a S3", key)
-    return {"background_key": key, "url": _to_url(str(dest))}
+    return {"background_key": key, "url": _to_url(str(dest)), "is_default": False}
 
 
 @app.get("/backgrounds")
@@ -553,7 +731,33 @@ def list_backgrounds() -> list[dict]:
     esto también funciona detrás de un despliegue con varias instancias.
     """
     storage = get_storage()
+    default_key = _get_default_background_key()
     return [
-        {"background_key": key.removeprefix("backgrounds/"), "url": storage.url(key)}
+        {
+            "background_key": key.removeprefix("backgrounds/"),
+            "url": storage.url(key),
+            "is_default": key.removeprefix("backgrounds/") == default_key,
+        }
         for key in storage.list_keys("backgrounds/")
+        if key != _DEFAULT_BACKGROUND_STORAGE_KEY
     ]
+
+
+class DefaultBackgroundUpdate(BaseModel):
+    background_key: str | None = None
+
+
+@app.put("/backgrounds/default")
+def set_default_background(payload: DefaultBackgroundUpdate) -> dict:
+    """Marca uno de los fondos guardados como el "Por defecto" del pool
+    compartido (o lo desmarca con `background_key: null`).
+
+    Un job nuevo sin fondo elegido explícitamente cae de vuelta a este fondo
+    en vez de a blanco (ver `create_job`). No afecta jobs ya creados.
+    """
+    if payload.background_key:
+        storage = get_storage()
+        if not storage.exists(background_key(payload.background_key)):
+            raise HTTPException(404, "Fondo no encontrado")
+    _set_default_background_key(payload.background_key)
+    return {"default_background_key": payload.background_key}

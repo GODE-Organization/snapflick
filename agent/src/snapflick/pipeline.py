@@ -17,10 +17,21 @@ from .models.schemas import Job, JobStatus, ProcessedImage, ProductRecord, Produ
 from .paths import catalog_dir, upload_processed_dir
 from .retry import with_retry
 from .tools.catalog_tools import export_catalog_json, render_catalog_html
-from .tools.image_tools import compose_on_background, make_thumbnail, remove_background
+from .tools.image_tools import (
+    compose_on_background,
+    keep_original,
+    make_thumbnail,
+    remove_background,
+)
 from .tools.storage_tools import get_storage
 
 log = logging.getLogger(__name__)
+
+# Sentinel de `background_key`/`background_path` para "no tocar el fondo de la
+# foto tal como se subió" — distinto de `None` (que significa fondo blanco vía
+# `compose_on_background`). No puede colisionar con una key real guardada en
+# `backgrounds/` porque esas siempre incluyen un prefijo hex de `uuid4().hex`.
+KEEP_ORIGINAL_BACKGROUND = "__original__"
 
 _GEMINI_STATUS_MESSAGES = {
     "UNAVAILABLE": (
@@ -131,10 +142,13 @@ def _process_one_image(
     stem = Path(src).stem
     img = ProcessedImage(source_path=src)
     try:
-        img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
-        img.composed_path = compose_on_background(
-            img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
-        )
+        if background_path == KEEP_ORIGINAL_BACKGROUND:
+            img.composed_path = keep_original(src, str(processed_dir / f"{stem}.jpg"))
+        else:
+            img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
+            img.composed_path = compose_on_background(
+                img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
+            )
         img.thumbnail_path = make_thumbnail(
             img.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
         )
@@ -153,6 +167,7 @@ def run_job(
     background_path: str | None = None,
     workdir: Path | None = None,
     on_update: Callable[[Job], None] | None = None,
+    per_image_backgrounds: dict[str, str | None] | None = None,
 ) -> Job:
     """Procesa `job` in place. El llamador es dueño del objeto `Job` (p.ej. el que
     vive en el diccionario JOBS de main.py), así que cualquiera que tenga una
@@ -160,7 +175,13 @@ def run_job(
 
     `on_update`, si se pasa, se llama después de cada imagen y al terminar el
     lote — main.py lo usa para persistir el progreso en SQLite a medida que
-    avanza, no solo al final (ver `db.JobStore`)."""
+    avanza, no solo al final (ver `db.JobStore`).
+
+    `per_image_backgrounds`, si se pasa, mapea `src` (un elemento de
+    `image_paths`) al fondo específico para esa foto — permite que cada
+    producto del lote use un fondo distinto en vez de forzar el mismo
+    `background_path` para todos. Una foto sin entrada en el mapa cae de
+    vuelta a `background_path`."""
     job.status = JobStatus.PROCESSING
     root = Path(workdir or settings.data_dir)
     processed_dir = root / upload_processed_dir(job.id)
@@ -170,9 +191,16 @@ def run_job(
     vision = build_vision_agent()
 
     for src in image_paths:
-        img, sheet, err = _process_one_image(src, background_path, processed_dir, vision)
+        bg = (
+            per_image_backgrounds.get(src, background_path)
+            if per_image_backgrounds
+            else background_path
+        )
+        img, sheet, err = _process_one_image(src, bg, processed_dir, vision)
         if sheet is not None:
-            job.products.append(ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img))
+            job.products.append(
+                ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img, background_key=bg)
+            )
         else:
             job.errors.append(f"{Path(src).name}: {err}")
         job.processed_images += 1
@@ -228,7 +256,9 @@ def add_product_to_job(
     if sheet is None:
         raise RuntimeError(err or "No se pudo procesar la imagen")
 
-    record = ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img)
+    record = ProductRecord(
+        id=uuid.uuid4().hex[:8], sheet=sheet, image=img, background_key=background_path
+    )
     job.products.append(record)
     job.total_images += 1
     job.processed_images += 1
@@ -241,4 +271,55 @@ def add_product_to_job(
 
     job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
     job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
+    return record
+
+
+def recompose_product_background(
+    job: Job,
+    product_id: str,
+    background_path: str | None,
+    workdir: Path | None = None,
+) -> ProductRecord:
+    """Recompone un producto ya extraído sobre un fondo distinto.
+
+    Reutiliza `image.cutout_path` (ya calculado por rembg) en vez de repetir
+    la extracción de fondo o la llamada al modelo de IA — cambiar de fondo es
+    puramente una operación de imagen (Pillow), así que no debería costar
+    cuota del proveedor de IA ni tiempo de rembg.
+
+    `background_path == KEEP_ORIGINAL_BACKGROUND` deja la foto tal como se
+    subió, sin recorte. Si el producto no tiene `cutout_path` (porque se
+    procesó originalmente con "mantener original") y ahora se le pide un
+    fondo real, acá sí se calcula el recorte por primera vez — es la única
+    situación en la que recomponer vuelve a tocar rembg."""
+    record = next((p for p in job.products if p.id == product_id), None)
+    if record is None:
+        raise ValueError("Producto no encontrado")
+
+    root = Path(workdir or settings.data_dir)
+    processed_dir = root / upload_processed_dir(job.id)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    cat_dir = root / catalog_dir(job.id)
+
+    stem = Path(record.image.source_path).stem
+    if background_path == KEEP_ORIGINAL_BACKGROUND:
+        record.image.composed_path = keep_original(
+            record.image.source_path, str(processed_dir / f"{stem}.jpg")
+        )
+    else:
+        if not record.image.cutout_path:
+            record.image.cutout_path = remove_background(
+                record.image.source_path, str(processed_dir / f"{stem}_cutout.png")
+            )
+        record.image.composed_path = compose_on_background(
+            record.image.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
+        )
+    record.image.thumbnail_path = make_thumbnail(
+        record.image.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
+    )
+    record.background_key = background_path
+
+    if job.plan:
+        job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
+        job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
     return record

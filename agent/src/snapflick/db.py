@@ -59,3 +59,7 @@ class JobStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT data FROM jobs ORDER BY created_at DESC").fetchall()
         return [Job.model_validate_json(row[0]) for row in rows]
+
+    def delete(self, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))

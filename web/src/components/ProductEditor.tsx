@@ -1,7 +1,8 @@
 "use client";
 
 import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
-import { updateProduct } from "@/lib/api";
+import { absoluteUrl, KEEP_ORIGINAL_BACKGROUND, updateProduct, updateProductBackground } from "@/lib/api";
+import { useBackgrounds } from "@/lib/hooks";
 import type { Job, ProductRecord, ProductSheet } from "@/lib/types";
 import { Icon } from "./Icon";
 
@@ -88,6 +89,22 @@ export const ProductEditor = forwardRef<
   const [visible, setVisible] = useState(product.visible);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const { data: backgrounds } = useBackgrounds();
+  const [changingBackground, setChangingBackground] = useState(false);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
+
+  async function changeBackground(key: string | null) {
+    setChangingBackground(true);
+    setBackgroundError(null);
+    try {
+      const updated = await updateProductBackground(jobId, product.id, key);
+      onSaved(updated);
+    } catch {
+      setBackgroundError("No se pudo cambiar el fondo. Intenta de nuevo.");
+    } finally {
+      setChangingBackground(false);
+    }
+  }
 
   const dirty = useMemo(() => {
     const currentKeywords = product.sheet.keywords.join(", ");
@@ -171,6 +188,73 @@ export const ProductEditor = forwardRef<
           />
         </button>
       </div>
+
+      <div className="flex flex-col gap-3 rounded-lg bg-surface-container p-4">
+        <div className="flex items-center gap-2">
+          <Icon name="wallpaper" className="text-on-surface-variant" />
+          <p className="text-body-md text-on-background">Fondo del producto</p>
+          {changingBackground && (
+            <span className="font-mono text-label-sm text-on-surface-variant">Aplicando…</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={changingBackground}
+            onClick={() => void changeBackground(null)}
+            className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border-2 bg-white text-label-sm font-mono text-on-surface-variant transition-colors disabled:opacity-50 ${
+              product.background_key === null ? "border-primary" : "border-transparent"
+            }`}
+            title="Fondo blanco"
+          >
+            Blanco
+          </button>
+          <button
+            type="button"
+            disabled={changingBackground}
+            onClick={() => void changeBackground(KEEP_ORIGINAL_BACKGROUND)}
+            className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border-2 bg-surface-container-high px-1 text-center text-label-sm font-mono text-on-surface-variant transition-colors disabled:opacity-50 ${
+              product.background_key === KEEP_ORIGINAL_BACKGROUND ? "border-primary" : "border-transparent"
+            }`}
+            title="Mantener el fondo original de la foto"
+          >
+            <Icon name="image" className="text-[18px]" />
+            Original
+          </button>
+          {backgrounds?.map((bg) => {
+            const selected = product.background_key === bg.url;
+            return (
+              <button
+                key={bg.background_key}
+                type="button"
+                disabled={changingBackground}
+                onClick={() => void changeBackground(bg.background_key)}
+                className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-colors disabled:opacity-50 ${
+                  selected ? "border-primary" : "border-transparent"
+                }`}
+                title={bg.background_key}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={absoluteUrl(bg.url) ?? undefined} alt={bg.background_key} className="h-full w-full object-cover" />
+                {selected && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-primary/20">
+                    <Icon name="check_circle" className="text-white" filled />
+                  </div>
+                )}
+                {bg.is_default && (
+                  <Icon name="star" className="absolute left-1 top-1 text-[14px] text-vivid-cyan" filled />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {backgroundError && (
+        <div className="flex items-center gap-2 rounded-lg bg-error-container p-4 text-on-error-container">
+          <Icon name="error" />
+          {backgroundError}
+        </div>
+      )}
 
       {product.image.error && (
         <div className="flex items-center gap-2 rounded-lg bg-error-container p-4 text-on-error-container">

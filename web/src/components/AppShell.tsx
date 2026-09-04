@@ -42,7 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-4">
+          {/* <div className="flex items-center gap-4">
             <button className="rounded-full p-2 text-on-surface-variant transition-all hover:bg-surface-container-high">
               <Icon name="notifications" />
             </button>
@@ -55,7 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Icon name="storefront" className="text-[18px]" />
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
       </header>
 

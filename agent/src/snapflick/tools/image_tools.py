@@ -107,6 +107,20 @@ def _cover_resize(img: Image.Image, w: int, h: int) -> Image.Image:
     return img.crop((left, top, left + w, top + h))
 
 
+def keep_original(image_path: str, output_path: str) -> str:
+    """Recodifica la foto tal cual a JPG, sin quitar ni componer fondo.
+
+    Usado cuando el usuario elige "mantener el fondo original" para un
+    producto: se salta rembg y `compose_on_background` por completo (no solo
+    porque el resultado no lo necesita, sino porque no tiene sentido gastar
+    tiempo/cuota removiendo un fondo que se va a descartar).
+    """
+    img = Image.open(image_path).convert("RGB")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, "JPEG", quality=92)
+    return output_path
+
+
 def make_thumbnail(image_path: str, output_path: str) -> str:
     """Genera una miniatura cuadrada para la vista de galería."""
     img = Image.open(image_path).convert("RGB")
