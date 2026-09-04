@@ -200,18 +200,18 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-start gap-3">
-                  <div>
-                    <h1 className="text-display-lg font-bold text-on-background">
+                <div className="flex flex-col items-start gap-3 sm:flex-row">
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-display-lg font-bold text-on-background wrap-break-word">
                       {job.plan?.catalog_title ?? "Catálogo"}
                     </h1>
                     {job.plan?.catalog_summary && (
-                      <p className="text-body-lg text-on-surface-variant">{job.plan.catalog_summary}</p>
+                      <p className="text-body-lg text-on-surface-variant wrap-break-word">{job.plan.catalog_summary}</p>
                     )}
                   </div>
                   <button
                     onClick={startEditingMeta}
-                    className="mt-2 flex shrink-0 items-center gap-2 rounded-full border border-outline-variant px-4 py-2 font-mono text-label-sm text-on-surface transition-colors hover:bg-surface-container-high"
+                    className="flex shrink-0 items-center gap-2 rounded-full border border-outline-variant px-4 py-2 font-mono text-label-sm text-on-surface transition-colors hover:bg-surface-container-high sm:mt-2"
                   >
                     <Icon name="edit" className="text-[16px]" />
                     Editar
@@ -220,7 +220,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
               )}
             </div>
             {publicUrl && (
-              <div className="flex min-w-[320px] flex-col gap-3">
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[320px]">
                 <label className="pl-1 font-mono text-label-sm uppercase tracking-widest text-on-surface-variant">
                   Enlace público
                 </label>
