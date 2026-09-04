@@ -83,18 +83,42 @@
   .meta-line { font: 500 13px/1 var(--font-mono); color: var(--ink-muted); letter-spacing: .01em; }
   .meta-line b { color: var(--ink); font-weight: 600; }
 
-  .cat-nav {
-    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px;
+  .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 20px; }
+  .search-box {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--surface-variant);
+    border-radius: 999px; padding: 10px 16px; flex: 1 1 260px; max-width: 420px;
   }
-  .cat-nav a {
-    text-decoration: none;
+  .search-box svg { width: 18px; height: 18px; flex-shrink: 0; fill: var(--ink-muted); }
+  .search-box input {
+    border: none; outline: none; background: transparent; width: 100%;
+    font: 500 14px/1.2 var(--font-sans); color: var(--ink);
+  }
+  .search-box input::placeholder { color: var(--ink-muted); }
+
+  .cat-nav { display: flex; flex-wrap: wrap; gap: 10px; }
+  .cat-btn {
+    cursor: pointer; text-decoration: none;
     font: 600 13px/1 var(--font-sans);
     padding: 10px 18px; border-radius: 999px;
     background: var(--surface); color: var(--ink-muted);
     border: 1px solid var(--surface-variant);
     transition: color .15s ease, border-color .15s ease, background .15s ease;
   }
-  .cat-nav a:hover { color: var(--primary); border-color: var(--accent); background: var(--accent-soft); }
+  .cat-btn:hover { color: var(--primary); border-color: var(--accent); background: var(--accent-soft); }
+  .cat-btn.active { color: #fff; background: var(--primary); border-color: var(--primary); }
+  .cat-btn .count { opacity: .75; font-weight: 500; }
+
+  .empty-state {
+    display: none; text-align: center; color: var(--ink-muted);
+    padding: 64px 20px; font-size: 1rem;
+  }
+  .empty-state.visible { display: block; }
+
+  /* `!important` porque `.card`/`.category` ya declaran su propio `display`
+     (flex / block implícito) — el atributo `hidden` nativo perdería el
+     empate de especificidad contra esas reglas de autor. */
+  .is-hidden { display: none !important; }
 
   main { max-width: 1280px; margin: 0 auto; padding: 8px clamp(20px, 4vw, 40px) 24px; }
 
@@ -180,24 +204,31 @@
     <h1>{{ title }}</h1>
     <p class="summary">{{ summary }}</p>
     <p class="meta-line"><b>{{ total }}</b> producto{{ "s" if total != 1 else "" }} · <b>{{ grouped|length }}</b> categoría{{ "s" if grouped|length != 1 else "" }}</p>
-    {% if grouped|length > 1 %}
-    <nav class="cat-nav">
-      {% for category, products in grouped.items() %}
-        {% if products %}<a href="#cat-{{ loop.index }}">{{ category }} ({{ products|length }})</a>{% endif %}
-      {% endfor %}
-    </nav>
-    {% endif %}
+    <div class="controls">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 104.472 10.03l4.75 4.75a1 1 0 001.414-1.414l-4.75-4.75A6 6 0 0010 4zm-4 6a4 4 0 118 0 4 4 0 01-8 0z"/></svg>
+        <input type="search" id="search-input" placeholder="Buscar productos, marcas, palabras clave…" aria-label="Buscar productos">
+      </div>
+      {% if grouped|length > 1 %}
+      <nav class="cat-nav" id="cat-nav" aria-label="Filtrar por categoría">
+        <button type="button" class="cat-btn active" data-category="">Todos <span class="count">({{ total }})</span></button>
+        {% for category, products in grouped.items() %}
+          {% if products %}<button type="button" class="cat-btn" data-category="{{ category }}">{{ category }} <span class="count">({{ products|length }})</span></button>{% endif %}
+        {% endfor %}
+      </nav>
+      {% endif %}
+    </div>
   </div>
 </div>
 
 <main>
 {% for category, products in grouped.items() %}
   {% if products %}
-  <section class="category" id="cat-{{ loop.index }}">
+  <section class="category" id="cat-{{ loop.index }}" data-category="{{ category }}">
     <h2>{{ category }} <span class="count">{{ products|length }}</span></h2>
     <div class="grid">
       {% for p in products %}
-      <article class="card">
+      <article class="card" data-category="{{ category }}" data-search="{{ ([p.sheet.name, p.sheet.brand, p.sheet.presentation, p.sheet.description] + p.sheet.keywords) | select | join(' ') | lower }}">
         <div class="media">
           <img src="{{ image_srcs[p.id] }}" alt="{{ p.sheet.name }}">
           {% if p.sheet.confidence == 'low' %}<span class="flag">Revisar datos</span>{% endif %}
@@ -224,11 +255,64 @@
   </section>
   {% endif %}
 {% endfor %}
+<p class="empty-state" id="empty-state">No se encontraron productos que coincidan con tu búsqueda.</p>
 </main>
 
 <footer>
   <span>{{ total }} productos · generado con {{ brand_name | default("SnapFlick") }}</span>
   <span class="fmark"><span class="dot" aria-hidden="true"></span> Fotos, recorte y ficha generados con IA</span>
 </footer>
+
+<script>
+(function () {
+  var searchInput = document.getElementById('search-input');
+  var catNav = document.getElementById('cat-nav');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.category'));
+  var emptyState = document.getElementById('empty-state');
+  var activeCategory = '';
+
+  function normalize(value) {
+    return (value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function applyFilters() {
+    var term = normalize(searchInput ? searchInput.value : '');
+    var visibleCount = 0;
+
+    cards.forEach(function (card) {
+      var matchesCategory = !activeCategory || card.getAttribute('data-category') === activeCategory;
+      var matchesSearch = !term || normalize(card.getAttribute('data-search')).indexOf(term) !== -1;
+      var show = matchesCategory && matchesSearch;
+      card.classList.toggle('is-hidden', !show);
+      if (show) visibleCount += 1;
+    });
+
+    sections.forEach(function (section) {
+      var anyVisible = section.querySelectorAll('.card:not(.is-hidden)').length > 0;
+      section.classList.toggle('is-hidden', !anyVisible);
+    });
+
+    if (emptyState) emptyState.classList.toggle('visible', visibleCount === 0);
+  }
+
+  if (searchInput) searchInput.addEventListener('input', applyFilters);
+
+  if (catNav) {
+    catNav.addEventListener('click', function (event) {
+      var btn = event.target.closest('.cat-btn');
+      if (!btn) return;
+      activeCategory = btn.getAttribute('data-category') || '';
+      Array.prototype.forEach.call(catNav.querySelectorAll('.cat-btn'), function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      applyFilters();
+    });
+  }
+})();
+</script>
 </body>
 </html>

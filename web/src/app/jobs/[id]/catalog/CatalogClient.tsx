@@ -19,6 +19,8 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [copied, setCopied] = useState(false);
   const [preview, setPreview] = useState<"desktop" | "mobile">("desktop");
   const [activeCategory, setActiveCategory] = useState<string>("Todos");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [visibilityFilter, setVisibilityFilter] = useState<"all" | "visible" | "hidden">("all");
   const [editingMeta, setEditingMeta] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [summaryDraft, setSummaryDraft] = useState("");
@@ -67,10 +69,21 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const categories = job.plan?.categories ?? [
     ...new Set(job.products.map((p) => p.sheet.category ?? "Sin categoría")),
   ];
-  const filteredProducts =
-    activeCategory === "Todos"
-      ? job.products
-      : job.products.filter((p) => (p.sheet.category ?? "Sin categoría") === activeCategory);
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredProducts = job.products.filter((p) => {
+    const matchesCategory =
+      activeCategory === "Todos" || (p.sheet.category ?? "Sin categoría") === activeCategory;
+    const matchesVisibility =
+      visibilityFilter === "all" || (visibilityFilter === "visible" ? p.visible : !p.visible);
+    const matchesSearch =
+      !normalizedQuery ||
+      [p.sheet.name, p.sheet.brand, p.sheet.presentation, p.sheet.description, ...p.sheet.keywords]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    return matchesCategory && matchesVisibility && matchesSearch;
+  });
 
   async function copyLink() {
     if (!publicUrl) return;
@@ -340,6 +353,43 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   preview === "mobile" ? "max-w-sm rounded-[2.5rem]" : "max-w-none"
                 }`}
               >
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="relative flex-1">
+                    <Icon
+                      name="search"
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant"
+                    />
+                    <input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Buscar por nombre, marca, palabra clave…"
+                      className="w-full rounded-full border border-outline-variant bg-surface py-2.5 pl-11 pr-4 text-body-md text-on-background outline-none transition-colors focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex shrink-0 gap-1 rounded-full bg-surface-container p-1">
+                    {(
+                      [
+                        { key: "all", label: "Todos" },
+                        { key: "visible", label: "Visibles" },
+                        { key: "hidden", label: "Ocultos" },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setVisibilityFilter(opt.key)}
+                        className={`rounded-full px-4 py-1.5 font-mono text-label-sm transition-colors ${
+                          visibilityFilter === opt.key
+                            ? "bg-surface-container-lowest text-primary shadow-sm"
+                            : "text-on-surface-variant hover:text-on-surface"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <nav className="hide-scrollbar mb-8 -mx-4 flex gap-2 overflow-x-auto px-4 pb-4">
                   <button
                     onClick={() => setActiveCategory("Todos")}
@@ -369,6 +419,15 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   onChange={handleFileSelected}
                   className="hidden"
                 />
+
+                {filteredProducts.length === 0 && (
+                  <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-outline-variant py-16 text-center">
+                    <Icon name="search_off" className="text-3xl text-on-surface-variant" />
+                    <p className="text-body-md text-on-surface-variant">
+                      Ningún producto coincide con la búsqueda o los filtros aplicados.
+                    </p>
+                  </div>
+                )}
 
                 <div className={`grid gap-6 ${preview === "mobile" ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"}`}>
                   {filteredProducts.map((p) => {

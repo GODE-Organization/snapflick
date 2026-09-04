@@ -137,7 +137,7 @@ def _relative_key(path: str) -> str | None:
         return None
 
 
-def _to_url(path: str | None) -> str | None:
+def _to_url(path: str | None, version: int | None = None) -> str | None:
     """Convierte un path absoluto de filesystem (bajo DATA) en una URL pública.
 
     Los paths que guarda `Job` son siempre paths locales bajo DATA, porque
@@ -145,6 +145,14 @@ def _to_url(path: str | None) -> str | None:
     capa HTTP es la que decide cómo servirlos: con `SNAPFLICK_S3_BUCKET` sin
     setear, vía `/files/...` (StaticFiles); con el bucket seteado, vía la URL
     firmada de S3 que ya subió `_sync_job_to_storage`.
+
+    `version` (ver `ProcessedImage.version`) se agrega como `?v=` solo en el
+    caso `/files/...` — cutout/composed/thumbnail se reescriben con el mismo
+    nombre de archivo al recomponer un producto con otro fondo, así que sin
+    esto el navegador sigue sirviendo la imagen vieja desde su caché aunque
+    el archivo en disco ya cambió. No aplica a URLs firmadas de S3: esas ya
+    traen su propia query string de firma (`X-Amz-...`), que además cambia
+    en cada llamada a `storage.url()` porque cada presigned URL es nueva.
     """
     if not path:
         return None
@@ -153,7 +161,10 @@ def _to_url(path: str | None) -> str | None:
         return None
     if settings.s3_bucket:
         return get_storage().url(rel)
-    return f"/files/{rel}"
+    url = f"/files/{rel}"
+    if version is not None:
+        url += f"?v={version}"
+    return url
 
 
 def _sync_job_to_storage(job: Job) -> None:
@@ -191,17 +202,21 @@ def job_to_public_dict(job: Job) -> dict:
     data["catalog_json_path"] = _to_url(job.catalog_json_path)
     for product, record in zip(data["products"], job.products, strict=True):
         img = product["image"]
+        version = record.image.version
         img["source_path"] = _to_url(record.image.source_path)
-        img["cutout_path"] = _to_url(record.image.cutout_path)
-        img["composed_path"] = _to_url(record.image.composed_path)
-        img["thumbnail_path"] = _to_url(record.image.thumbnail_path)
+        img["cutout_path"] = _to_url(record.image.cutout_path, version=version)
+        img["composed_path"] = _to_url(record.image.composed_path, version=version)
+        img["thumbnail_path"] = _to_url(record.image.thumbnail_path, version=version)
         product["background_key"] = _background_key_url(record.background_key)
     return data
 
 
 def _cover_thumbnail(job: Job) -> str | None:
     for record in job.products:
-        thumb = _to_url(record.image.thumbnail_path or record.image.composed_path)
+        thumb = _to_url(
+            record.image.thumbnail_path or record.image.composed_path,
+            version=record.image.version,
+        )
         if thumb:
             return thumb
     return None

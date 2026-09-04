@@ -318,6 +318,11 @@ def recompose_product_background(
         record.image.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
     )
     record.background_key = background_path
+    # composed_path/thumbnail_path (y a veces cutout_path) se reescriben con el
+    # mismo nombre de archivo — sin esto, la URL servida por main.py no cambia
+    # y el navegador sigue mostrando la imagen vieja desde su caché aunque el
+    # archivo en disco ya se recompuso.
+    record.image.version += 1
 
     if job.plan:
         job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))

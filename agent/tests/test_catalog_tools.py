@@ -107,3 +107,51 @@ def test_export_catalog_json_excluye_productos_no_visibles(tmp_path: Path):
     out = export_catalog_json(job, str(tmp_path / "catalogo.json"))
     data = json.loads(Path(out).read_text(encoding="utf-8"))
     assert data["products"] == []
+
+
+def test_catalogo_html_incluye_buscador_y_filtros_por_categoria(tmp_path: Path):
+    """El catálogo publicado (HTML autocontenido, sin framework) debe traer un
+    buscador y botones de filtro por categoría con los `data-*` que usa el
+    <script> embebido para filtrar sin depender de un backend."""
+    job = _make_job(tmp_path)
+    # cat-nav solo se renderiza con más de una categoría (ver template) —
+    # se agrega un segundo producto en otra categoría para ejercitar esa rama.
+    segundo = tmp_path / "producto2.jpg"
+    Image.new("RGB", (60, 60), (10, 200, 10)).save(segundo, "JPEG")
+    job.products.append(
+        ProductRecord(
+            id="p2",
+            sheet=ProductSheet(name="Galletas", description="Galletas dulces."),
+            image=ProcessedImage(source_path=str(segundo), composed_path=str(segundo)),
+        )
+    )
+    job.plan.categories.append("Snacks")
+    job.plan.assignments.append(
+        CategoryAssignment(product_id="p2", category="Snacks", reason="es un snack")
+    )
+
+    out = render_catalog_html(job, str(tmp_path / "catalogo.html"))
+    html = Path(out).read_text(encoding="utf-8")
+
+    assert 'id="search-input"' in html
+    assert 'id="cat-nav"' in html
+    assert 'class="cat-btn active" data-category=""' in html
+    assert 'data-category="Bebidas"' in html
+    assert 'data-category="Snacks"' in html
+    # el índice de búsqueda por producto junta nombre/marca/descripción/keywords
+    assert "refresco de cola" in html
+    assert "marca x" in html
+    assert 'id="empty-state"' in html
+
+
+def test_catalogo_html_data_search_omite_campos_vacios(tmp_path: Path):
+    """`p.sheet.presentation` es None en el fixture — el filtro Jinja `select`
+    antes de unir los campos con espacios no debe dejar dobles espacios ni
+    la palabra "None" colada en el índice de búsqueda."""
+    job = _make_job(tmp_path)
+    out = render_catalog_html(job, str(tmp_path / "catalogo.html"))
+    html = Path(out).read_text(encoding="utf-8")
+
+    match = re.search(r'data-search="([^"]*)"', html)
+    assert match, "no se encontró el atributo data-search"
+    assert "none" not in match.group(1).lower()
