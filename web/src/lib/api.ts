@@ -54,6 +54,11 @@ export async function addProduct(jobId: string, file: File): Promise<Job> {
   return asJson(res);
 }
 
+export async function deleteProduct(jobId: string, productId: string): Promise<Job> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/products/${productId}`, { method: "DELETE" });
+  return asJson(res);
+}
+
 export interface CatalogMetaPatch {
   catalog_title?: string;
   catalog_summary?: string;

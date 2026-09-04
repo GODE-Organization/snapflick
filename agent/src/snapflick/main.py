@@ -435,6 +435,37 @@ def update_product(job_id: str, product_id: str, payload: ProductUpdate) -> dict
     return job_to_public_dict(job)
 
 
+@app.delete("/jobs/{job_id}/products/{product_id}", response_model=Job)
+def delete_product(job_id: str, product_id: str) -> dict:
+    """Borra un producto del catálogo (no solo lo oculta, ver `ProductUpdate.visible`).
+
+    No borra los archivos de imagen en disco/S3 — solo saca el producto de
+    `job.products` y de la asignación de categoría del plan. Igual que
+    `update_product`, re-renderiza el catálogo publicado para que el borrado
+    se refleje ahí también.
+    """
+    if job_id not in JOBS:
+        raise HTTPException(404, "Job no encontrado")
+    job = JOBS[job_id]
+    record = next((p for p in job.products if p.id == product_id), None)
+    if record is None:
+        raise HTTPException(404, "Producto no encontrado")
+
+    job.products.remove(record)
+    if job.plan:
+        job.plan.assignments = [a for a in job.plan.assignments if a.product_id != product_id]
+
+    if job.plan and job.catalog_html_path:
+        out_dir = Path(job.catalog_html_path).parent
+        job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
+        export_catalog_json(job, str(out_dir / "catalogo.json"))
+        _sync_job_to_storage(job)
+
+    STORE.save(job)
+    _notify_change(job_id)
+    return job_to_public_dict(job)
+
+
 @app.post("/jobs/{job_id}/products", response_model=Job)
 def add_product(job_id: str, file: UploadFile = File(...)) -> dict:
     """Agrega un producto a un catálogo ya generado, sin tener que rehacer el lote.

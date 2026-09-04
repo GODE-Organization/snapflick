@@ -8,7 +8,7 @@ import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { BackgroundPicker, type BackgroundChoice } from "@/components/BackgroundPicker";
-import { createJob } from "@/lib/api";
+import { absoluteUrl, createJob } from "@/lib/api";
 import { useJobs } from "@/lib/hooks";
 
 export default function DashboardPage() {
@@ -108,7 +108,11 @@ export default function DashboardPage() {
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-surface-container-high">
                           {job.thumbnail_url ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={job.thumbnail_url} alt={job.catalog_title ?? job.id} className="h-full w-full object-cover" />
+                            <img
+                              src={absoluteUrl(job.thumbnail_url) ?? undefined}
+                              alt={job.catalog_title ?? job.id}
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
                               <Icon name="storefront" />

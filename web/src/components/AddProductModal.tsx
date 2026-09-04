@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { addProduct } from "@/lib/api";
 import type { Job } from "@/lib/types";
 import { Icon } from "./Icon";
 
@@ -20,14 +19,11 @@ const STEPS = [
 const STEP_INTERVAL_MS = 1500;
 
 export function AddProductModal({
-  jobId,
-  file,
   previewUrl,
+  uploadPromise,
   onAdded,
   onClose,
 }: {
-  jobId: string;
-  file: File;
   /**
    * URL del blob de la imagen, creada por el padre en el mismo evento
    * síncrono en el que el usuario eligió el archivo (`URL.createObjectURL`),
@@ -39,6 +35,17 @@ export function AddProductModal({
    * efecto tampoco, por la misma razón.
    */
   previewUrl: string;
+  /**
+   * La llamada a `POST /jobs/{id}/products` (`addProduct`) ya despachada por
+   * el padre, en el mismo evento síncrono de selección de archivo — no acá.
+   * `add_product_to_job` en el backend NO es idempotente (agrega un producto
+   * cada vez que se llama), así que si este componente disparara el POST
+   * dentro de un efecto, el doble mount+cleanup+mount de StrictMode en
+   * desarrollo lo mandaría dos veces de verdad (el cleanup no puede cancelar
+   * un POST que ya llegó al servidor) y el producto quedaba duplicado. Acá
+   * solo nos suscribimos a la promesa ya en vuelo.
+   */
+  uploadPromise: Promise<Job>;
   onAdded: (job: Job) => void;
   onClose: () => void;
 }) {
@@ -52,7 +59,7 @@ export function AddProductModal({
       setStepIndex((i) => (i < STEPS.length - 1 ? i + 1 : i));
     }, STEP_INTERVAL_MS);
 
-    addProduct(jobId, file)
+    uploadPromise
       .then((job) => {
         if (cancelled) return;
         clearInterval(timer);

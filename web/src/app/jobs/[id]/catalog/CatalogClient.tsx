@@ -4,11 +4,12 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { AddProductModal } from "@/components/AddProductModal";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
 import { ProductEditModal } from "@/components/ProductEditModal";
-import { absoluteUrl, updateCatalog, updateProduct } from "@/lib/api";
+import { absoluteUrl, addProduct, deleteProduct, updateCatalog } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
-import type { ProductRecord } from "@/lib/types";
+import type { Job, ProductRecord } from "@/lib/types";
 
 export function CatalogClient({ jobId }: { jobId: string }) {
   const { data: job, error, mutate } = useJob(jobId);
@@ -20,7 +21,11 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [titleDraft, setTitleDraft] = useState("");
   const [summaryDraft, setSummaryDraft] = useState("");
   const [savingMeta, setSavingMeta] = useState(false);
-  const [pendingUpload, setPendingUpload] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<{
+    previewUrl: string;
+    uploadPromise: Promise<Job>;
+  } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ProductRecord | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (error) {
@@ -97,15 +102,24 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     }
   }
 
-  async function toggleVisibility(product: ProductRecord) {
-    const updated = await updateProduct(jobId, product.id, { visible: !product.visible });
+  async function confirmDeleteProduct() {
+    if (!pendingDelete) return;
+    const product = pendingDelete;
+    setPendingDelete(null);
+    const updated = await deleteProduct(jobId, product.id);
     mutate(updated);
+    if (selected?.id === product.id) setSelected(null);
   }
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (file) setPendingUpload({ file, previewUrl: URL.createObjectURL(file) });
+    if (!file) return;
+    // El POST se despacha acá, en el evento síncrono de selección — no dentro
+    // de un efecto del modal. `add_product_to_job` no es idempotente, y un
+    // efecto con StrictMode (monta, limpia, remonta en desarrollo) lo
+    // mandaría dos veces de verdad, duplicando el producto en el catálogo.
+    setPendingUpload({ previewUrl: URL.createObjectURL(file), uploadPromise: addProduct(jobId, file) });
   }
 
   function closePendingUpload() {
@@ -361,12 +375,12 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              void toggleVisibility(p);
+                              setPendingDelete(p);
                             }}
-                            title={p.visible ? "Ocultar del catálogo" : "Mostrar en el catálogo"}
-                            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-surface/90 text-on-surface shadow-sm backdrop-blur-md transition-colors hover:bg-surface"
+                            title="Eliminar producto"
+                            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-surface/90 text-error shadow-sm backdrop-blur-md transition-colors hover:bg-error hover:text-on-error"
                           >
-                            <Icon name={p.visible ? "visibility" : "visibility_off"} className="text-[18px]" />
+                            <Icon name="delete" className="text-[18px]" />
                           </button>
                         </div>
                         <div className="p-5">
@@ -411,15 +425,24 @@ export function CatalogClient({ jobId }: { jobId: string }) {
 
       {pendingUpload && (
         <AddProductModal
-          jobId={jobId}
-          file={pendingUpload.file}
           previewUrl={pendingUpload.previewUrl}
+          uploadPromise={pendingUpload.uploadPromise}
           onAdded={(updated) => {
             mutate(updated);
             setActiveCategory("Todos");
             closePendingUpload();
           }}
           onClose={closePendingUpload}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Eliminar producto"
+          message={`¿Eliminar "${pendingDelete.sheet.name}" del catálogo? Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          onConfirm={confirmDeleteProduct}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
     </AppShell>
