@@ -38,6 +38,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [pendingDeleteCatalog, setPendingDeleteCatalog] = useState(false);
   const [deletingCatalog, setDeletingCatalog] = useState(false);
   const [downloadingImages, setDownloadingImages] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (error) {
@@ -170,36 +171,53 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   async function downloadImagesZip() {
     if (!job || downloadingImages) return;
     setDownloadingImages(true);
+    setDownloadError(null);
     try {
       const zip = new JSZip();
       const usedNames = new Set<string>();
+      let failedCount = 0;
       await Promise.all(
         job.products
           .filter((p) => p.visible)
           .map(async (p) => {
-            const url = absoluteUrl(p.image.composed_path ?? p.image.source_path);
-            if (!url) return;
-            const res = await fetch(url);
-            if (!res.ok) return;
-            const blob = await res.blob();
-            const ext = blob.type.split("/")[1]?.split("+")[0] || "jpg";
-            const base = p.sheet.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || p.id;
-            let name = `${base}.${ext}`;
-            let i = 2;
-            while (usedNames.has(name)) {
-              name = `${base}-${i}.${ext}`;
-              i += 1;
+            try {
+              const url = absoluteUrl(p.image.composed_path ?? p.image.source_path);
+              if (!url) return;
+              const res = await fetch(url);
+              if (!res.ok) throw new Error(`${res.status}`);
+              const blob = await res.blob();
+              const ext = blob.type.split("/")[1]?.split("+")[0] || "jpg";
+              const base = p.sheet.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || p.id;
+              let name = `${base}.${ext}`;
+              let i = 2;
+              while (usedNames.has(name)) {
+                name = `${base}-${i}.${ext}`;
+                i += 1;
+              }
+              usedNames.add(name);
+              zip.file(name, blob);
+            } catch {
+              // Una imagen individual que falla (borrada del disco, red intermitente)
+              // no debe tirar abajo el .zip completo del resto de productos.
+              failedCount += 1;
             }
-            usedNames.add(name);
-            zip.file(name, blob);
           }),
       );
+      if (usedNames.size === 0) {
+        setDownloadError("No se pudo descargar ninguna imagen.");
+        return;
+      }
       const content = await zip.generateAsync({ type: "blob" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(content);
       link.download = `${job.plan?.catalog_title ?? job.id}-imagenes.zip`;
       link.click();
       URL.revokeObjectURL(link.href);
+      if (failedCount > 0) {
+        setDownloadError(`Se descargaron ${usedNames.size} imágenes; ${failedCount} no se pudieron incluir.`);
+      }
+    } catch {
+      setDownloadError("No se pudo generar el .zip de imágenes.");
     } finally {
       setDownloadingImages(false);
     }
@@ -400,6 +418,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                       </div>
                       <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
                     </button>
+                    {downloadError && <p className="px-3 text-body-sm text-error">{downloadError}</p>}
                   </div>
                 </div>
 

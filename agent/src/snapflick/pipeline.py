@@ -131,26 +131,31 @@ def _cached_extract_product_sheet(src: str, agent) -> ProductSheet:
 
 
 def _process_one_image(
-    src: str, background_path: str | None, processed_dir: Path, vision
+    src: str, background_path: str | None, processed_dir: Path, vision, file_id: str
 ) -> tuple[ProcessedImage, ProductSheet | None, str | None]:
     """Recorte + composición + miniatura + extracción para una sola imagen.
+
+    `file_id` (el id del `ProductRecord`, generado por el llamador antes de
+    procesar) nombra los archivos de salida en vez del stem del nombre
+    original — dos fotos subidas con el mismo nombre de archivo (p.ej. dos
+    "Vitafer-L.jpg" distintas) generarían el mismo path en `processed_dir` y
+    se pisarían entre sí en disco; el id de producto es único por diseño.
 
     Devuelve `(imagen_procesada, ficha, None)` si todo salió bien, o
     `(imagen_procesada, None, mensaje_de_error_amigable)` si falló — el
     llamador decide qué hacer con el error (job.errors en un lote, o
     propagarlo directo cuando es un solo producto agregado a mano)."""
-    stem = Path(src).stem
     img = ProcessedImage(source_path=src)
     try:
         if background_path == KEEP_ORIGINAL_BACKGROUND:
-            img.composed_path = keep_original(src, str(processed_dir / f"{stem}.jpg"))
+            img.composed_path = keep_original(src, str(processed_dir / f"{file_id}.jpg"))
         else:
-            img.cutout_path = remove_background(src, str(processed_dir / f"{stem}_cutout.png"))
+            img.cutout_path = remove_background(src, str(processed_dir / f"{file_id}_cutout.png"))
             img.composed_path = compose_on_background(
-                img.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
+                img.cutout_path, background_path, str(processed_dir / f"{file_id}.jpg")
             )
         img.thumbnail_path = make_thumbnail(
-            img.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
+            img.composed_path, str(processed_dir / f"{file_id}_thumb.jpg")
         )
         sheet = _cached_extract_product_sheet(src, agent=vision)
         return img, sheet, None
@@ -196,10 +201,11 @@ def run_job(
             if per_image_backgrounds
             else background_path
         )
-        img, sheet, err = _process_one_image(src, bg, processed_dir, vision)
+        product_id = uuid.uuid4().hex[:8]
+        img, sheet, err = _process_one_image(src, bg, processed_dir, vision, product_id)
         if sheet is not None:
             job.products.append(
-                ProductRecord(id=uuid.uuid4().hex[:8], sheet=sheet, image=img, background_key=bg)
+                ProductRecord(id=product_id, sheet=sheet, image=img, background_key=bg)
             )
         else:
             job.errors.append(f"{Path(src).name}: {err}")
@@ -253,13 +259,14 @@ def add_product_to_job(
     cat_dir = root / catalog_dir(job.id)
 
     vision = build_vision_agent()
-    img, sheet, err = _process_one_image(image_path, background_path, processed_dir, vision)
+    product_id = uuid.uuid4().hex[:8]
+    img, sheet, err = _process_one_image(
+        image_path, background_path, processed_dir, vision, product_id
+    )
     if sheet is None:
         raise RuntimeError(err or "No se pudo procesar la imagen")
 
-    record = ProductRecord(
-        id=uuid.uuid4().hex[:8], sheet=sheet, image=img, background_key=background_path
-    )
+    record = ProductRecord(id=product_id, sheet=sheet, image=img, background_key=background_path)
     job.products.append(record)
     job.total_images += 1
     job.processed_images += 1
@@ -303,21 +310,21 @@ def recompose_product_background(
     processed_dir.mkdir(parents=True, exist_ok=True)
     cat_dir = root / catalog_dir(job.id)
 
-    stem = Path(record.image.source_path).stem
+    file_id = record.id
     if background_path == KEEP_ORIGINAL_BACKGROUND:
         record.image.composed_path = keep_original(
-            record.image.source_path, str(processed_dir / f"{stem}.jpg")
+            record.image.source_path, str(processed_dir / f"{file_id}.jpg")
         )
     else:
         if not record.image.cutout_path:
             record.image.cutout_path = remove_background(
-                record.image.source_path, str(processed_dir / f"{stem}_cutout.png")
+                record.image.source_path, str(processed_dir / f"{file_id}_cutout.png")
             )
         record.image.composed_path = compose_on_background(
-            record.image.cutout_path, background_path, str(processed_dir / f"{stem}.jpg")
+            record.image.cutout_path, background_path, str(processed_dir / f"{file_id}.jpg")
         )
     record.image.thumbnail_path = make_thumbnail(
-        record.image.composed_path, str(processed_dir / f"{stem}_thumb.jpg")
+        record.image.composed_path, str(processed_dir / f"{file_id}_thumb.jpg")
     )
     record.background_key = background_path
     # composed_path/thumbnail_path (y a veces cutout_path) se reescriben con el
