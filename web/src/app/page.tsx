@@ -9,6 +9,7 @@ import { ErrorBanner } from "@/components/ErrorState";
 import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
+import { LoadingState } from "@/components/LoadingState";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { BackgroundPicker, type BackgroundChoice } from "@/components/BackgroundPicker";
 import { absoluteUrl, createJob, deleteJob, EXPLICIT_WHITE_BACKGROUND, KEEP_ORIGINAL_BACKGROUND } from "@/lib/api";
@@ -150,7 +151,7 @@ export default function DashboardPage() {
                 <h2 className="mb-4 text-headline-md font-semibold text-on-surface">Catálogos generados</h2>
                 <div className="space-y-4">
                   {!jobs ? (
-                    <p className="text-body-md text-on-surface-variant">Cargando…</p>
+                    <LoadingState compact title="Cargando…" />
                   ) : doneJobs.length === 0 ? (
                     <p className="text-body-md text-on-surface-variant">
                       Todavía no hay catálogos terminados. Aparecerán aquí cuando un lote termine de procesarse.

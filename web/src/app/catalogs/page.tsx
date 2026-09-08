@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
+import { LoadingState } from "@/components/LoadingState";
 import { absoluteUrl, deleteJob } from "@/lib/api";
 import { useJobs } from "@/lib/hooks";
 import type { JobSummary, JobStatus } from "@/lib/types";
@@ -99,7 +100,7 @@ export default function CatalogsPage() {
         </div>
 
         {!filteredJobs ? (
-          <p className="text-body-md text-on-surface-variant">Cargando…</p>
+          <LoadingState compact title="Cargando…" />
         ) : filteredJobs.length === 0 ? (
           <div className="flex flex-col items-center gap-3 rounded-xl bg-surface p-16 text-center shadow-sm">
             <Icon name="storefront" className="text-4xl text-on-surface-variant" />

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
+import { LoadingState } from "@/components/LoadingState";
 import { absoluteUrl } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
 
@@ -46,7 +47,7 @@ export function ProcessingClient({ jobId }: { jobId: string }) {
   if (!job) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-on-surface-variant">Cargando…</p>
+        <LoadingState title="Cargando lote…" />
       </AppShell>
     );
   }

@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorBanner, ErrorState } from "@/components/ErrorState";
 import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
+import { LoadingState } from "@/components/LoadingState";
 import { ProductEditModal } from "@/components/ProductEditModal";
 import { absoluteUrl, addProduct, deleteJob, deleteProduct, updateCatalog } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
@@ -57,7 +58,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   if (!job) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-on-surface-variant">Cargando…</p>
+        <LoadingState title="Cargando catálogo…" />
       </AppShell>
     );
   }

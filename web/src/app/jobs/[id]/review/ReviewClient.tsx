@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
+import { LoadingState } from "@/components/LoadingState";
 import { ProductEditor, type ProductEditorHandle } from "@/components/ProductEditor";
 import { absoluteUrl } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
@@ -43,7 +44,7 @@ export function ReviewClient({ jobId }: { jobId: string }) {
   if (!job || !current) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-on-surface-variant">Cargando…</p>
+        <LoadingState title="Cargando lote…" />
       </AppShell>
     );
   }
