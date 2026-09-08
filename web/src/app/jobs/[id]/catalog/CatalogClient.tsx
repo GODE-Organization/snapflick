@@ -300,7 +300,8 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   <Icon name="link" className="px-3 text-outline" />
                   <input
                     readOnly
-                    value={publicUrl}
+                    title={publicUrl}
+                    value={`.../${jobId}`}
                     className="w-full truncate border-none bg-transparent py-2 font-mono text-label-md text-on-background outline-none"
                   />
                   <button
