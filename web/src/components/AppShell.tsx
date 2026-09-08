@@ -7,7 +7,7 @@ import { Logo } from "./Logo";
 
 const NAV = [
   { href: "/", label: "Dashboard" },
-  { href: "/", label: "Catálogos" },
+  { href: "/catalogs", label: "Catálogos" },
 ];
 
 const QUICK_ACTIONS = [

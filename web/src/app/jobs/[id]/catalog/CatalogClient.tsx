@@ -159,8 +159,16 @@ export function CatalogClient({ jobId }: { jobId: string }) {
       <div className="relative w-full">
         <div aria-hidden className="pointer-events-none fixed -z-10 h-full w-full bg-gradient-to-br from-background via-surface-container-low to-background" />
         <div className="mx-auto w-full max-w-(--container-max) space-y-12 px-4 py-12 sm:px-margin-desktop">
+          <Link
+            href="/catalogs"
+            className="inline-flex w-fit items-center gap-2 font-mono text-label-md text-on-surface-variant transition-colors hover:text-primary"
+          >
+            <Icon name="arrow_back" className="text-[18px]" />
+            Volver a catálogos
+          </Link>
+
           <div className="relative flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
-            <div className="max-w-2xl space-y-4">
+            <div className="min-w-0 flex-1 space-y-4">
               <div className="flex items-center gap-3">
                 <span className="rounded-full bg-ai-success/10 px-3 py-1 font-mono text-label-sm text-ai-success">
                   Estado: Listo
