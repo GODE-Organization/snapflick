@@ -36,6 +36,7 @@ def main() -> None:
         print(f"Catálogo: {job.plan.catalog_title}")
         print(f"Categorías: {', '.join(job.plan.categories)}")
     print(f"HTML: {job.catalog_html_path}")
+    print(f"PDF: {job.catalog_pdf_path}")
     for e in job.errors:
         print(f"  ! {e}")
 

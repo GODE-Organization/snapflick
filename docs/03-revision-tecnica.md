@@ -358,7 +358,8 @@ licencia. Verificado con `grep -ri snapcatalog .` → cero resultados.
 - Si más adelante se prefiere `BedrockAgentCoreApp` en vez de FastAPI (ver hallazgo #6),
   recrear un entrypoint con esa clase y mover `/jobs`, `/backgrounds` y el estático de
   `/files` a rutas de Starlette montadas ahí encima.
-- Exportar a PDF / CSV Shopify — ver `01-alcance-del-producto.md`.
+- Exportar CSV Shopify — ver `01-alcance-del-producto.md` (el PDF ya se exporta, ver
+  `catalog_tools.render_catalog_pdf`).
 - Quitar `libgl1`/`libglib2.0-0` del Dockerfile si se confirma que ninguna dependencia
   transitiva de `scikit-image` los necesita en Debian (ver hallazgo BAJO).
 

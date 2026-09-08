@@ -16,7 +16,7 @@ from .model_provider import resolved_model_id, resolved_provider
 from .models.schemas import Job, JobStatus, ProcessedImage, ProductRecord, ProductSheet
 from .paths import catalog_dir, upload_processed_dir
 from .retry import with_retry
-from .tools.catalog_tools import export_catalog_json, render_catalog_html
+from .tools.catalog_tools import export_catalog_json, render_catalog_html, render_catalog_pdf
 from .tools.image_tools import (
     compose_on_background,
     keep_original,
@@ -221,6 +221,7 @@ def run_job(
 
     job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
     job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
+    job.catalog_pdf_path = render_catalog_pdf(job, str(cat_dir / "catalogo.pdf"))
     job.status = JobStatus.DONE
     if on_update:
         on_update(job)
@@ -271,6 +272,7 @@ def add_product_to_job(
 
     job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
     job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
+    job.catalog_pdf_path = render_catalog_pdf(job, str(cat_dir / "catalogo.pdf"))
     return record
 
 
@@ -327,4 +329,5 @@ def recompose_product_background(
     if job.plan:
         job.catalog_html_path = render_catalog_html(job, str(cat_dir / "catalogo.html"))
         job.catalog_json_path = export_catalog_json(job, str(cat_dir / "catalogo.json"))
+        job.catalog_pdf_path = render_catalog_pdf(job, str(cat_dir / "catalogo.pdf"))
     return record

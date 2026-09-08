@@ -22,7 +22,6 @@ Un agente que convierte fotos caseras de productos en un catálogo publicable:
 
 ## Deseable (si sobra tiempo)
 
-- Exportar catálogo a PDF.
 - Exportar CSV compatible con Shopify / catálogo de WhatsApp Business.
 - Sugerencia de precio o texto de marketing.
 - Corrección manual de la ficha desde el frontend.

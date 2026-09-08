@@ -15,10 +15,11 @@ dependencies = [
   "rembg[cpu]>=2.0.59",
   "onnxruntime>=1.19.0",
   "jinja2>=3.1.4",
+  "fpdf2>=2.7.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3.0", "ruff>=0.7.0", "httpx>=0.27.0"]
+dev = ["pytest>=8.3.0", "ruff>=0.7.0", "httpx>=0.27.0", "pypdf>=5.0.0"]
 # Necesarios solo para que ese proveedor pueda ser probado/usado (ver model_provider.py).
 # En modo automático (SNAPFLICK_MODEL_PROVIDER sin setear) conviene instalar los cuatro.
 gemini = ["google-genai>=1.0.0"]

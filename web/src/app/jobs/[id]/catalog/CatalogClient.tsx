@@ -1,5 +1,6 @@
 "use client";
 
+import JSZip from "jszip";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -32,6 +33,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [pendingDelete, setPendingDelete] = useState<ProductRecord | null>(null);
   const [pendingDeleteCatalog, setPendingDeleteCatalog] = useState(false);
   const [deletingCatalog, setDeletingCatalog] = useState(false);
+  const [downloadingImages, setDownloadingImages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (error) {
@@ -66,6 +68,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
 
   const publicUrl = absoluteUrl(job.catalog_html_path);
   const jsonUrl = absoluteUrl(job.catalog_json_path);
+  const pdfUrl = absoluteUrl(job.catalog_pdf_path);
   const categories = job.plan?.categories ?? [
     ...new Set(job.products.map((p) => p.sheet.category ?? "Sin categoría")),
   ];
@@ -152,6 +155,44 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   function closePendingUpload() {
     if (pendingUpload) URL.revokeObjectURL(pendingUpload.previewUrl);
     setPendingUpload(null);
+  }
+
+  async function downloadImagesZip() {
+    if (!job || downloadingImages) return;
+    setDownloadingImages(true);
+    try {
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+      await Promise.all(
+        job.products
+          .filter((p) => p.visible)
+          .map(async (p) => {
+            const url = absoluteUrl(p.image.composed_path ?? p.image.source_path);
+            if (!url) return;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const blob = await res.blob();
+            const ext = blob.type.split("/")[1]?.split("+")[0] || "jpg";
+            const base = p.sheet.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || p.id;
+            let name = `${base}.${ext}`;
+            let i = 2;
+            while (usedNames.has(name)) {
+              name = `${base}-${i}.${ext}`;
+              i += 1;
+            }
+            usedNames.add(name);
+            zip.file(name, blob);
+          }),
+      );
+      const content = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(content);
+      link.download = `${job.plan?.catalog_title ?? job.id}-imagenes.zip`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } finally {
+      setDownloadingImages(false);
+    }
   }
 
   return (
@@ -316,14 +357,38 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                         <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
                       </a>
                     )}
-                    <div className="flex w-full cursor-not-allowed items-center justify-between rounded-lg p-3 opacity-40" title="Próximamente">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded bg-error-container text-on-error-container">
-                          <Icon name="picture_as_pdf" className="text-sm" />
+                    {pdfUrl && (
+                      <a
+                        href={pdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group flex w-full items-center justify-between rounded-lg p-3 text-left transition-colors hover:bg-surface-container"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded bg-error-container text-on-error-container">
+                            <Icon name="picture_as_pdf" className="text-sm" />
+                          </div>
+                          <span className="font-mono text-label-md text-on-background">Catálogo en PDF</span>
                         </div>
-                        <span className="font-mono text-label-md text-on-background">Imprimir PDF</span>
+                        <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={downloadImagesZip}
+                      disabled={downloadingImages}
+                      className="group flex w-full items-center justify-between rounded-lg p-3 text-left transition-colors hover:bg-surface-container disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded bg-surface-container-high text-on-surface">
+                          <Icon name="folder_zip" className="text-sm" />
+                        </div>
+                        <span className="font-mono text-label-md text-on-background">
+                          {downloadingImages ? "Preparando .zip…" : "Imágenes (.zip)"}
+                        </span>
                       </div>
-                    </div>
+                      <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
+                    </button>
                   </div>
                 </div>
 

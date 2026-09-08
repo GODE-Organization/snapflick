@@ -40,7 +40,7 @@ from .pipeline import (
     recompose_product_background,
     run_job,
 )
-from .tools.catalog_tools import export_catalog_json, render_catalog_html
+from .tools.catalog_tools import export_catalog_json, render_catalog_html, render_catalog_pdf
 from .tools.image_tools import _get_session as _get_rembg_session
 from .tools.storage_tools import get_storage
 
@@ -259,7 +259,12 @@ def _sync_job_to_storage(job: Job) -> None:
     if not settings.s3_bucket:
         return
     storage = get_storage()
-    candidates = [job.background_key, job.catalog_html_path, job.catalog_json_path]
+    candidates = [
+        job.background_key,
+        job.catalog_html_path,
+        job.catalog_json_path,
+        job.catalog_pdf_path,
+    ]
     for record in job.products:
         img = record.image
         candidates += [img.source_path, img.cutout_path, img.composed_path, img.thumbnail_path]
@@ -281,6 +286,7 @@ def job_to_public_dict(job: Job) -> dict:
     data["background_key"] = _background_key_url(job.background_key)
     data["catalog_html_path"] = _to_url(job.catalog_html_path)
     data["catalog_json_path"] = _to_url(job.catalog_json_path)
+    data["catalog_pdf_path"] = _to_url(job.catalog_pdf_path)
     for product, record in zip(data["products"], job.products, strict=True):
         img = product["image"]
         version = record.image.version
@@ -633,6 +639,7 @@ def update_catalog_meta(
         out_dir = Path(job.catalog_html_path).parent
         job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
         export_catalog_json(job, str(out_dir / "catalogo.json"))
+        job.catalog_pdf_path = render_catalog_pdf(job, str(out_dir / "catalogo.pdf"))
         _sync_job_to_storage(job)
 
     STORE.save(job)
@@ -698,6 +705,7 @@ def update_product(
         out_dir = Path(job.catalog_html_path).parent
         job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
         export_catalog_json(job, str(out_dir / "catalogo.json"))
+        job.catalog_pdf_path = render_catalog_pdf(job, str(out_dir / "catalogo.pdf"))
         _sync_job_to_storage(job)
 
     STORE.save(job)
@@ -732,6 +740,7 @@ def delete_product(
         out_dir = Path(job.catalog_html_path).parent
         job.catalog_html_path = render_catalog_html(job, str(out_dir / "catalogo.html"))
         export_catalog_json(job, str(out_dir / "catalogo.json"))
+        job.catalog_pdf_path = render_catalog_pdf(job, str(out_dir / "catalogo.pdf"))
         _sync_job_to_storage(job)
 
     STORE.save(job)

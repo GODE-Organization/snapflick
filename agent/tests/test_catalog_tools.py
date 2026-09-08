@@ -25,7 +25,11 @@ from snapflick.models.schemas import (
     ProductRecord,
     ProductSheet,
 )
-from snapflick.tools.catalog_tools import export_catalog_json, render_catalog_html
+from snapflick.tools.catalog_tools import (
+    export_catalog_json,
+    render_catalog_html,
+    render_catalog_pdf,
+)
 
 
 def _make_job(tmp_path: Path) -> Job:
@@ -142,6 +146,50 @@ def test_catalogo_html_incluye_buscador_y_filtros_por_categoria(tmp_path: Path):
     assert "refresco de cola" in html
     assert "marca x" in html
     assert 'id="empty-state"' in html
+
+
+def test_render_catalog_pdf_genera_un_pdf_valido(tmp_path: Path):
+    job = _make_job(tmp_path)
+    out = render_catalog_pdf(job, str(tmp_path / "catalogo.pdf"))
+
+    data = Path(out).read_bytes()
+    assert data.startswith(b"%PDF-")
+    assert len(data) > 1000
+
+
+def test_render_catalog_pdf_oculta_productos_no_visibles(tmp_path: Path):
+    from pypdf import PdfReader
+
+    job = _make_job(tmp_path)
+    job.products[0].visible = False
+
+    out = render_catalog_pdf(job, str(tmp_path / "catalogo.pdf"))
+    text = "".join(page.extract_text() for page in PdfReader(out).pages)
+    assert "Refresco de cola" not in text
+
+
+def test_render_catalog_pdf_incluye_titulo_y_nombre_de_producto(tmp_path: Path):
+    from pypdf import PdfReader
+
+    job = _make_job(tmp_path)
+    out = render_catalog_pdf(job, str(tmp_path / "catalogo.pdf"))
+    text = "".join(page.extract_text() for page in PdfReader(out).pages)
+
+    assert "Catálogo de prueba" in text
+    assert "Refresco de cola" in text
+    assert "Bebidas" in text
+
+
+def test_render_catalog_pdf_no_revienta_con_puntuacion_tipografica(tmp_path: Path):
+    """Las fuentes core de fpdf2 (helvetica) solo soportan Latin-1 — un modelo de
+    IA genera comillas tipográficas, guiones largos y "…" con frecuencia, y eso
+    tira FPDFUnicodeEncodingException si no se sanea antes de dibujarlo."""
+    job = _make_job(tmp_path)
+    job.plan.catalog_title = "Catálogo — edición ’especial’"
+    job.products[0].sheet.description = "Descripción “larga” de prueba…"
+
+    out = render_catalog_pdf(job, str(tmp_path / "catalogo.pdf"))
+    assert Path(out).read_bytes().startswith(b"%PDF-")
 
 
 def test_catalogo_html_data_search_omite_campos_vacios(tmp_path: Path):

@@ -61,6 +61,7 @@ export interface Job {
   plan: CatalogPlan | null;
   catalog_html_path: string | null;
   catalog_json_path: string | null;
+  catalog_pdf_path: string | null;
   errors: string[];
   created_at: string;
 }
