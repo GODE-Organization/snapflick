@@ -7,6 +7,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { AddProductModal } from "@/components/AddProductModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ErrorBanner, ErrorState } from "@/components/ErrorState";
 import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { ProductEditModal } from "@/components/ProductEditModal";
@@ -44,7 +45,12 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   if (error) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-error">No se pudo cargar el catálogo.</p>
+        <ErrorState
+          title="No se pudo cargar el catálogo"
+          message="Se perdió la conexión en tiempo real. Intentando reconectar…"
+          actionHref="/"
+          actionLabel="Volver al inicio"
+        />
       </AppShell>
     );
   }
@@ -418,7 +424,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                       </div>
                       <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
                     </button>
-                    {downloadError && <p className="px-3 text-body-sm text-error">{downloadError}</p>}
+                    {downloadError && <ErrorBanner message={downloadError} className="mx-3" />}
                   </div>
                 </div>
 

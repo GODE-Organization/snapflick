@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
 import { ProductEditor, type ProductEditorHandle } from "@/components/ProductEditor";
 import { absoluteUrl } from "@/lib/api";
@@ -30,7 +31,12 @@ export function ReviewClient({ jobId }: { jobId: string }) {
   if (error) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-error">No se pudo cargar el lote.</p>
+        <ErrorState
+          title="No se pudo cargar el lote"
+          message="Se perdió la conexión en tiempo real. Intentando reconectar…"
+          actionHref="/"
+          actionLabel="Volver al inicio"
+        />
       </AppShell>
     );
   }

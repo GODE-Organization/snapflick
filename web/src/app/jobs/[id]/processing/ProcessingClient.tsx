@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
+import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
 import { absoluteUrl } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
@@ -33,7 +34,12 @@ export function ProcessingClient({ jobId }: { jobId: string }) {
   if (error) {
     return (
       <AppShell>
-        <p className="p-8 text-body-md text-error">No se pudo consultar el lote.</p>
+        <ErrorState
+          title="No se pudo consultar el lote"
+          message="Revisa tu conexión e intenta de nuevo."
+          actionHref="/"
+          actionLabel="Volver al inicio"
+        />
       </AppShell>
     );
   }

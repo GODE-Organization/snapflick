@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ErrorBanner } from "@/components/ErrorState";
 import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
@@ -130,7 +131,7 @@ export default function DashboardPage() {
             />
             <BackgroundPicker value={effectiveBackground} onChange={setBackground} />
 
-            {error && <p className="text-body-md text-error">{error}</p>}
+            {error && <ErrorBanner message={error} />}
 
             <button
               onClick={handleSubmit}
