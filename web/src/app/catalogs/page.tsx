@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
 import { absoluteUrl, deleteJob } from "@/lib/api";
@@ -163,6 +164,8 @@ export default function CatalogsPage() {
           </div>
         )}
       </div>
+
+      <Fab actions={[{ label: "Nuevo catálogo", icon: "add_circle", href: "/" }]} />
 
       {pendingDeleteJob && (
         <ConfirmDialog
