@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
 import { UploadDropzone } from "@/components/UploadDropzone";
@@ -33,6 +34,24 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingDeleteJob, setPendingDeleteJob] = useState<JobSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const fabFileInputRef = useRef<HTMLInputElement>(null);
+
+  function resetForm() {
+    setFiles([]);
+    setFileBackgrounds([]);
+    setBackground(null);
+    setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleFabFilesSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const added = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (added.length === 0) return;
+    setFiles((current) => [...current, ...added]);
+    setFileBackgrounds((current) => [...current, ...added.map(() => null)]);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function confirmDeleteJob() {
     if (!pendingDeleteJob) return;
@@ -210,6 +229,21 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <input
+        ref={fabFileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleFabFilesSelected}
+      />
+      <Fab
+        actions={[
+          { label: "Nuevo catálogo", icon: "add_circle", onClick: resetForm },
+          { label: "Añadir imagen", icon: "add_photo_alternate", onClick: () => fabFileInputRef.current?.click() },
+        ]}
+      />
 
       {pendingDeleteJob && (
         <ConfirmDialog

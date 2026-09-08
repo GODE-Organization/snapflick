@@ -6,11 +6,14 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { AddProductModal } from "@/components/AddProductModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { ProductEditModal } from "@/components/ProductEditModal";
 import { absoluteUrl, addProduct, deleteJob, deleteProduct, updateCatalog } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
 import type { Job, ProductRecord } from "@/lib/types";
+
+const PRODUCTS_PAGE_SIZE = 6;
 
 export function CatalogClient({ jobId }: { jobId: string }) {
   const router = useRouter();
@@ -21,6 +24,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [activeCategory, setActiveCategory] = useState<string>("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "visible" | "hidden">("all");
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PAGE_SIZE);
   const [editingMeta, setEditingMeta] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [summaryDraft, setSummaryDraft] = useState("");
@@ -84,6 +88,12 @@ export function CatalogClient({ jobId }: { jobId: string }) {
         .includes(normalizedQuery);
     return matchesCategory && matchesVisibility && matchesSearch;
   });
+  const visibleProducts = filteredProducts.slice(0, visibleCount);
+  const hasMoreProducts = filteredProducts.length > visibleCount;
+
+  function resetPagination() {
+    setVisibleCount(PRODUCTS_PAGE_SIZE);
+  }
 
   async function copyLink() {
     if (!publicUrl) return;
@@ -370,7 +380,10 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                     <input
                       type="search"
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        resetPagination();
+                      }}
                       placeholder="Buscar por nombre, marca, palabra clave…"
                       className="w-full rounded-full border border-outline-variant bg-surface py-2.5 pl-11 pr-4 text-body-md text-on-background outline-none transition-colors focus:border-primary"
                     />
@@ -385,7 +398,10 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                     ).map((opt) => (
                       <button
                         key={opt.key}
-                        onClick={() => setVisibilityFilter(opt.key)}
+                        onClick={() => {
+                          setVisibilityFilter(opt.key);
+                          resetPagination();
+                        }}
                         className={`rounded-full px-4 py-1.5 font-mono text-label-sm transition-colors ${
                           visibilityFilter === opt.key
                             ? "bg-surface-container-lowest text-primary shadow-sm"
@@ -400,7 +416,10 @@ export function CatalogClient({ jobId }: { jobId: string }) {
 
                 <nav className="hide-scrollbar mb-8 -mx-4 flex gap-2 overflow-x-auto px-4 pb-4">
                   <button
-                    onClick={() => setActiveCategory("Todos")}
+                    onClick={() => {
+                      setActiveCategory("Todos");
+                      resetPagination();
+                    }}
                     className={`whitespace-nowrap rounded-full px-6 py-2 font-mono text-label-md transition-colors ${
                       activeCategory === "Todos" ? "bg-primary text-on-primary shadow-md" : "bg-surface-container text-on-surface hover:bg-surface-container-high"
                     }`}
@@ -410,7 +429,10 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   {categories.map((cat) => (
                     <button
                       key={cat}
-                      onClick={() => setActiveCategory(cat)}
+                      onClick={() => {
+                        setActiveCategory(cat);
+                        resetPagination();
+                      }}
                       className={`whitespace-nowrap rounded-full px-6 py-2 font-mono text-label-md transition-colors ${
                         activeCategory === cat ? "bg-primary text-on-primary shadow-md" : "bg-surface-container text-on-surface hover:bg-surface-container-high"
                       }`}
@@ -438,7 +460,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                 )}
 
                 <div className={`grid gap-6 ${preview === "mobile" ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"}`}>
-                  {filteredProducts.map((p) => {
+                  {visibleProducts.map((p) => {
                     const thumb = absoluteUrl(p.image.thumbnail_path ?? p.image.composed_path);
                     return (
                       <div
@@ -496,11 +518,29 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                     <span className="font-mono text-label-md">Agregar producto</span>
                   </button>
                 </div>
+
+                {hasMoreProducts && (
+                  <div className="mt-8 flex justify-center">
+                    <button
+                      onClick={() => setVisibleCount((count) => count + PRODUCTS_PAGE_SIZE)}
+                      className="flex items-center gap-2 rounded-full border border-outline-variant px-6 py-2.5 font-mono text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
+                    >
+                      Ver más ({filteredProducts.length - visibleProducts.length} restantes)
+                      <Icon name="expand_more" className="text-[18px]" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      <Fab
+        actions={[
+          { label: "Añadir imagen", icon: "add_photo_alternate", onClick: () => fileInputRef.current?.click() },
+        ]}
+      />
 
       {selected && (
         <ProductEditModal
