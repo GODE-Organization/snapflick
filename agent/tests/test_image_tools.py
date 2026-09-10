@@ -12,6 +12,24 @@ def test_autocrop_alpha_recorta_al_contenido():
     assert out.size == (40, 40)
 
 
+def test_autocrop_alpha_ignora_ruido_de_alfa_casi_cero():
+    """Regresión: rembg deja restos de alfa 1-30 (sobre 255) desparramados
+    lejos del producto en algunas fotos. `getbbox()` cuenta cualquier alfa > 0
+    como contenido, así que ese ruido inflaba el recorte mucho más allá del
+    producto real; como `compose_on_background` centra según ese recorte, el
+    producto terminaba pegado a un lado en vez de centrado (visto con datos
+    reales: una botella de 260px de ancho en un recorte de 642px, con el resto
+    relleno de alfa ruidoso)."""
+    img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    img.paste(Image.new("RGBA", (40, 40), (255, 0, 0, 255)), (20, 20))
+    # Ruido lejos del producto real: alfa=5, invisible pero no cero.
+    img.putpixel((190, 190), (0, 0, 0, 5))
+
+    out = _autocrop_alpha(img, pad=0)
+
+    assert out.size == (40, 40)
+
+
 def test_cover_resize_devuelve_tamano_exacto():
     out = _cover_resize(Image.new("RGB", (800, 400)), 300, 300)
     assert out.size == (300, 300)

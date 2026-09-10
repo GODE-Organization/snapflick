@@ -46,10 +46,20 @@ def remove_background(image_path: str, output_path: str) -> str:
     return output_path
 
 
-def _autocrop_alpha(img: Image.Image, pad: int = 8) -> Image.Image:
+def _autocrop_alpha(img: Image.Image, pad: int = 8, alpha_threshold: int = 16) -> Image.Image:
     """Recorta al bounding box del canal alfa. Esto es lo que separa un
-    resultado profesional de uno casero."""
-    bbox = img.split()[-1].getbbox()
+    resultado profesional de uno casero.
+
+    `getbbox()` cuenta cualquier píxel con alfa > 0 como contenido, pero rembg
+    deja restos de alfa casi cero (ruido de 1-30 sobre 255) desparramados
+    lejos del producto en algunas fotos. Un solo píxel de ese ruido en una
+    esquina infla el bounding box mucho más allá del producto real, y como
+    `compose_on_background` centra según este recorte, el producto visible
+    termina pegado a un lado en vez de centrado. Umbralizar antes de medir el
+    bbox ignora ese ruido sin afectar el borde antialiaseado real del
+    producto, que queda pegado al contorno sólido en unos pocos píxeles.
+    """
+    bbox = img.split()[-1].point(lambda a: 255 if a >= alpha_threshold else 0).getbbox()
     if not bbox:
         return img
     left, top, right, bottom = bbox
