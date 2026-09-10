@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { absoluteUrl, setDefaultBackground, uploadBackground } from "@/lib/api";
+import { absoluteUrl, deleteBackground, setDefaultBackground, uploadBackground } from "@/lib/api";
 import { useBackgrounds } from "@/lib/hooks";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Icon } from "./Icon";
 
 export type BackgroundChoice =
@@ -21,6 +22,8 @@ export function BackgroundPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [settingDefault, setSettingDefault] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function handleFiles(list: FileList | null) {
     if (!list || list.length === 0) return;
@@ -44,6 +47,20 @@ export function BackgroundPicker({
       await mutate();
     } finally {
       setSettingDefault(null);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const key = pendingDelete;
+    setPendingDelete(null);
+    setDeleting(true);
+    try {
+      await deleteBackground(key);
+      await mutate();
+      if (value.mode === "saved" && value.key === key) onChange({ mode: "none" });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -127,6 +144,18 @@ export function BackgroundPicker({
                   Por defecto
                 </span>
               )}
+              <button
+                type="button"
+                title="Borrar fondo"
+                disabled={deleting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPendingDelete(bg.background_key);
+                }}
+                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 text-error shadow-sm backdrop-blur-md transition-colors hover:bg-error hover:text-on-error disabled:opacity-50"
+              >
+                <Icon name="delete" className="text-[16px]" />
+              </button>
             </div>
           );
         })}
@@ -151,6 +180,15 @@ export function BackgroundPicker({
           }}
         />
       </div>
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Borrar fondo"
+          message="¿Borrar este fondo de marca? Esta acción no se puede deshacer."
+          confirmLabel="Borrar"
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </section>
   );
 }

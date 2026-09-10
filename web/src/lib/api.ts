@@ -126,15 +126,23 @@ export async function deleteJob(jobId: string): Promise<void> {
 }
 
 export async function listBackgrounds(): Promise<BackgroundOption[]> {
-  const res = await fetch(`${API_URL}/backgrounds`);
+  const res = await fetch(`${API_URL}/backgrounds`, WITH_SESSION);
   return asJson(res);
 }
 
 export async function uploadBackground(file: File): Promise<BackgroundOption> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_URL}/backgrounds`, { method: "POST", body: form });
+  const res = await fetch(`${API_URL}/backgrounds`, { ...WITH_SESSION, method: "POST", body: form });
   return asJson(res);
+}
+
+export async function deleteBackground(backgroundKey: string): Promise<void> {
+  const res = await fetch(`${API_URL}/backgrounds/${encodeURIComponent(backgroundKey)}`, {
+    ...WITH_SESSION,
+    method: "DELETE",
+  });
+  await asJson(res);
 }
 
 export async function setDefaultBackground(

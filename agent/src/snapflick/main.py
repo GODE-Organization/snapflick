@@ -210,6 +210,59 @@ def _set_default_background_key(key: str | None) -> None:
         storage.save(str(src), _DEFAULT_BACKGROUND_STORAGE_KEY)
 
 
+_BACKGROUND_OWNERS_STORAGE_KEY = "backgrounds/_owners.json"
+
+
+def _get_background_owners() -> dict[str, str]:
+    """Mapa `background_key -> session_id` de quién subió cada fondo guardado.
+
+    Igual que `_require_owner` con jobs: una key ausente del mapa es un fondo
+    "legacy" (subido antes de que `upload_background` empezara a registrar
+    dueño) y se trata como accesible por cualquiera, para no esconder de golpe
+    fondos ya usados en producción."""
+    storage = get_storage()
+    if not storage.exists(_BACKGROUND_OWNERS_STORAGE_KEY):
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / "owners.json"
+        storage.fetch(_BACKGROUND_OWNERS_STORAGE_KEY, str(dest))
+        return json.loads(dest.read_text(encoding="utf-8"))
+
+
+def _save_background_owners(owners: dict[str, str]) -> None:
+    storage = get_storage()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "owners.json"
+        src.write_text(json.dumps(owners), encoding="utf-8")
+        storage.save(str(src), _BACKGROUND_OWNERS_STORAGE_KEY)
+
+
+def _set_background_owner(key: str, session_id: str) -> None:
+    owners = _get_background_owners()
+    owners[key] = session_id
+    _save_background_owners(owners)
+
+
+def _delete_background_owner(key: str) -> None:
+    owners = _get_background_owners()
+    if key in owners:
+        del owners[key]
+        _save_background_owners(owners)
+
+
+def _require_background_owner(key: str, session_id: str) -> None:
+    """404 si `key` es un fondo guardado de otro visitante.
+
+    El fondo marcado como "Por defecto" (`PUT /backgrounds/default`) es
+    deliberadamente compartido — cualquiera puede usarlo aunque no lo haya
+    subido — así que se deja pasar antes de mirar el mapa de dueños."""
+    if key == _get_default_background_key():
+        return
+    owner = _get_background_owners().get(key)
+    if owner is not None and owner != session_id:
+        raise HTTPException(404, "Fondo no encontrado")
+
+
 def _relative_key(path: str) -> str | None:
     """Path absoluto de filesystem (bajo DATA) -> key relativo, o None si está fuera de DATA."""
     try:
@@ -521,6 +574,7 @@ async def create_job(
             shutil.copyfileobj(f.file, fh)
         paths.append(str(dest))
         if per_file_keys and per_file_keys[i]:
+            _require_background_owner(per_file_keys[i], session_id)
             per_image_backgrounds[str(dest)] = _resolve_background_path(per_file_keys[i])
 
     bg_path: str | None = None
@@ -529,6 +583,7 @@ async def create_job(
         with open(bg_path, "wb") as fh:
             shutil.copyfileobj(background.file, fh)
     elif background_key:
+        _require_background_owner(background_key, session_id)
         bg_path = _resolve_background_path(background_key)
     else:
         # Sin elección explícita: cae al fondo marcado como "Por defecto"
@@ -780,6 +835,8 @@ def add_product(
     with dest.open("wb") as fh:
         shutil.copyfileobj(file.file, fh)
 
+    if background_key:
+        _require_background_owner(background_key, session_id)
     bg_path = _resolve_background_path(background_key) if background_key else job.background_key
     try:
         add_product_to_job(job, str(dest), bg_path)
@@ -817,6 +874,8 @@ def update_product_background(
     job = JOBS[job_id]
     _require_owner(job, session_id)
 
+    if payload.background_key:
+        _require_background_owner(payload.background_key, session_id)
     bg_path = _resolve_background_path(payload.background_key)
     try:
         recompose_product_background(job, product_id, bg_path)
@@ -865,8 +924,10 @@ async def ws_job(websocket: WebSocket, job_id: str) -> None:
 
 
 @app.post("/backgrounds")
-async def upload_background(file: UploadFile = File(...)) -> dict:
-    """Guarda un fondo de marca reutilizable."""
+async def upload_background(
+    file: UploadFile = File(...), session_id: str = Depends(session_dependency)
+) -> dict:
+    """Guarda un fondo de marca reutilizable, asociado al visitante que lo subió."""
     key = f"{uuid.uuid4().hex[:8]}_{file.filename}"
     dest = DATA / background_key(key)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -877,12 +938,15 @@ async def upload_background(file: UploadFile = File(...)) -> dict:
             get_storage().save(str(dest), background_key(key))
         except Exception:
             log.exception("No se pudo subir el fondo %s a S3", key)
+    _set_background_owner(key, session_id)
     return {"background_key": key, "url": _to_url(str(dest)), "is_default": False}
 
 
 @app.get("/backgrounds")
-def list_backgrounds() -> list[dict]:
-    """Lista los fondos de marca guardados previamente.
+def list_backgrounds(session_id: str = Depends(session_dependency)) -> list[dict]:
+    """Lista los fondos de marca guardados previamente, acotada a los del
+    visitante actual — más los fondos legacy sin dueño y el marcado como "Por
+    defecto" (ver `_require_background_owner`), que son compartidos a propósito.
 
     Va siempre a través de `Storage.list_keys` (disco local o S3, según
     `SNAPFLICK_S3_BUCKET`) en vez de leer el disco local directamente — así
@@ -890,15 +954,24 @@ def list_backgrounds() -> list[dict]:
     """
     storage = get_storage()
     default_key = _get_default_background_key()
-    return [
-        {
-            "background_key": key.removeprefix("backgrounds/"),
-            "url": storage.url(key),
-            "is_default": key.removeprefix("backgrounds/") == default_key,
-        }
-        for key in storage.list_keys("backgrounds/")
-        if key != _DEFAULT_BACKGROUND_STORAGE_KEY
-    ]
+    owners = _get_background_owners()
+    result = []
+    for key in storage.list_keys("backgrounds/"):
+        if key in (_DEFAULT_BACKGROUND_STORAGE_KEY, _BACKGROUND_OWNERS_STORAGE_KEY):
+            continue
+        bg_key = key.removeprefix("backgrounds/")
+        is_default = bg_key == default_key
+        owner = owners.get(bg_key)
+        if not is_default and owner is not None and owner != session_id:
+            continue
+        result.append(
+            {
+                "background_key": bg_key,
+                "url": storage.url(key),
+                "is_default": is_default,
+            }
+        )
+    return result
 
 
 class DefaultBackgroundUpdate(BaseModel):
@@ -919,3 +992,31 @@ def set_default_background(payload: DefaultBackgroundUpdate) -> dict:
             raise HTTPException(404, "Fondo no encontrado")
     _set_default_background_key(payload.background_key)
     return {"default_background_key": payload.background_key}
+
+
+@app.delete("/backgrounds/{key:path}")
+def delete_background(key: str, session_id: str = Depends(session_dependency)) -> dict:
+    """Borra un fondo guardado (archivo + su entrada en el mapa de dueños).
+
+    Misma regla de acceso que `_require_background_owner`: solo el dueño
+    puede borrar un fondo propio, pero uno legacy sin dueño registrado (ver
+    `_get_background_owners`) queda abierto a cualquiera, igual que se dejó
+    abierto su *uso* — no tendría sentido poder usarlo pero no poder borrarlo.
+    No borra `job.background_key` de jobs que ya lo usaron: esos siguen
+    apuntando a un archivo que a partir de acá ya no existe, igual que pasa
+    hoy si se edita/reemplaza el archivo a mano.
+    """
+    storage = get_storage()
+    rel_key = background_key(key)
+    if not storage.exists(rel_key):
+        raise HTTPException(404, "Fondo no encontrado")
+
+    owner = _get_background_owners().get(key)
+    if owner is not None and owner != session_id:
+        raise HTTPException(404, "Fondo no encontrado")
+
+    storage.delete_prefix(rel_key)
+    if _get_default_background_key() == key:
+        _set_default_background_key(None)
+    _delete_background_owner(key)
+    return {"background_key": key, "deleted": True}
