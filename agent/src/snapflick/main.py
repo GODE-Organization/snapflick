@@ -928,8 +928,16 @@ async def ws_job(websocket: WebSocket, job_id: str) -> None:
 async def upload_background(
     file: UploadFile = File(...), session_id: str = Depends(session_dependency)
 ) -> dict:
-    """Guarda un fondo de marca reutilizable, asociado al visitante que lo subió."""
-    key = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    """Guarda un fondo de marca reutilizable, asociado al visitante que lo subió.
+
+    `key` es un código opaco (igual que `ProductRecord.id` en pipeline.py), no
+    el nombre de archivo original — evita filtrar ese nombre (a veces revela
+    cosas como el autor de una foto de stock) en una URL que, sin sesión de
+    por medio, va a viajar tal cual al frontend. Se conserva la extensión
+    porque `StaticFiles`/S3 la usan para adivinar el content-type al servirlo.
+    """
+    suffix = Path(file.filename).suffix if file.filename else ""
+    key = f"{uuid.uuid4().hex[:8]}{suffix}"
     dest = DATA / background_key(key)
     dest.parent.mkdir(parents=True, exist_ok=True)
     with dest.open("wb") as fh:

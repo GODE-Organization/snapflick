@@ -29,16 +29,29 @@ def _upload(filename: str, session_id: str) -> dict:
 def test_list_backgrounds_no_muestra_fondos_de_otra_sesion(tmp_path: Path, monkeypatch):
     _setup(tmp_path, monkeypatch)
 
-    _upload("playa.jpg", "session-a")
-    _upload("oficina.jpg", "session-b")
+    bg_a = _upload("playa.jpg", "session-a")
+    bg_b = _upload("oficina.jpg", "session-b")
 
     keys_a = {b["background_key"] for b in main_module.list_backgrounds(session_id="session-a")}
     keys_b = {b["background_key"] for b in main_module.list_backgrounds(session_id="session-b")}
 
-    assert any("playa.jpg" in k for k in keys_a)
-    assert not any("oficina.jpg" in k for k in keys_a)
-    assert any("oficina.jpg" in k for k in keys_b)
-    assert not any("playa.jpg" in k for k in keys_b)
+    assert bg_a["background_key"] in keys_a
+    assert bg_b["background_key"] not in keys_a
+    assert bg_b["background_key"] in keys_b
+    assert bg_a["background_key"] not in keys_b
+
+
+def test_upload_background_no_filtra_el_nombre_de_archivo_original(tmp_path: Path, monkeypatch):
+    """`background_key` debe ser un código opaco, igual que `ProductRecord.id`
+    — no el nombre de archivo original, que a veces contiene información del
+    autor/origen de la imagen (ver `alper-guzeler-...unsplash.jpg` en el caso
+    real que motivó este cambio)."""
+    _setup(tmp_path, monkeypatch)
+
+    uploaded = _upload("alper-guzeler-secret-name.jpg", "session-a")
+
+    assert "alper-guzeler-secret-name" not in uploaded["background_key"]
+    assert uploaded["background_key"].endswith(".jpg")
 
 
 def test_list_backgrounds_muestra_fondos_legacy_sin_dueño(tmp_path: Path, monkeypatch):
