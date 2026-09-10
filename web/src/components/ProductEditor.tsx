@@ -5,6 +5,7 @@ import { absoluteUrl, KEEP_ORIGINAL_BACKGROUND, updateProduct, updateProductBack
 import { useBackgrounds } from "@/lib/hooks";
 import type { Job, ProductRecord, ProductSheet } from "@/lib/types";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
 
 function ConfidenceDot({ level }: { level: ProductRecord["sheet"]["confidence"] }) {
   const color = level === "high" ? "bg-ai-success" : level === "medium" ? "bg-vivid-cyan" : "bg-error";
@@ -88,19 +89,18 @@ export const ProductEditor = forwardRef<
   const [keywordsInput, setKeywordsInput] = useState(product.sheet.keywords.join(", "));
   const [visible, setVisible] = useState(product.visible);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const { data: backgrounds } = useBackgrounds();
   const [changingBackground, setChangingBackground] = useState(false);
-  const [backgroundError, setBackgroundError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function changeBackground(key: string | null) {
     setChangingBackground(true);
-    setBackgroundError(null);
     try {
       const updated = await updateProductBackground(jobId, product.id, key);
       onSaved(updated);
+      toast.success("Fondo actualizado.");
     } catch {
-      setBackgroundError("No se pudo cambiar el fondo. Intenta de nuevo.");
+      toast.error("No se pudo cambiar el fondo. Intenta de nuevo.");
     } finally {
       setChangingBackground(false);
     }
@@ -135,13 +135,13 @@ export const ProductEditor = forwardRef<
     }
     if (visible !== product.visible) patch.visible = visible;
     setSaving(true);
-    setSaveError(null);
     try {
       const updated = await updateProduct(jobId, product.id, patch);
       onSaved(updated);
+      toast.success("Cambios guardados.");
       return true;
     } catch {
-      setSaveError("No se pudo guardar. Intenta de nuevo.");
+      toast.error("No se pudo guardar. Intenta de nuevo.");
       return false;
     } finally {
       setSaving(false);
@@ -249,23 +249,10 @@ export const ProductEditor = forwardRef<
           })}
         </div>
       </div>
-      {backgroundError && (
-        <div className="flex items-center gap-2 rounded-lg bg-error-container p-4 text-on-error-container">
-          <Icon name="error" />
-          {backgroundError}
-        </div>
-      )}
-
       {product.image.error && (
         <div className="flex items-center gap-2 rounded-lg bg-error-container p-4 text-on-error-container">
           <Icon name="error" />
           {product.image.error}
-        </div>
-      )}
-      {saveError && (
-        <div className="flex items-center gap-2 rounded-lg bg-error-container p-4 text-on-error-container">
-          <Icon name="error" />
-          {saveError}
         </div>
       )}
 

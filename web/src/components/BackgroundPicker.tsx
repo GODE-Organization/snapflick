@@ -5,6 +5,7 @@ import { absoluteUrl, deleteBackground, setDefaultBackground, uploadBackground }
 import { useBackgrounds } from "@/lib/hooks";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
 
 export type BackgroundChoice =
   | { mode: "none" }
@@ -24,6 +25,7 @@ export function BackgroundPicker({
   const [settingDefault, setSettingDefault] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const toast = useToast();
 
   async function handleFiles(list: FileList | null) {
     if (!list || list.length === 0) return;
@@ -35,6 +37,9 @@ export function BackgroundPicker({
       }
       await mutate();
       if (last) onChange({ mode: "saved", key: last.background_key });
+      toast.success("Fondo subido.");
+    } catch {
+      toast.error("No se pudo subir el fondo. Intenta de nuevo.");
     } finally {
       setUploading(false);
     }
@@ -45,6 +50,8 @@ export function BackgroundPicker({
     try {
       await setDefaultBackground(bg.is_default ? null : bg.background_key);
       await mutate();
+    } catch {
+      toast.error("No se pudo actualizar el fondo por defecto. Intenta de nuevo.");
     } finally {
       setSettingDefault(null);
     }
@@ -59,6 +66,9 @@ export function BackgroundPicker({
       await deleteBackground(key);
       await mutate();
       if (value.mode === "saved" && value.key === key) onChange({ mode: "none" });
+      toast.success("Fondo eliminado.");
+    } catch {
+      toast.error("No se pudo eliminar el fondo. Intenta de nuevo.");
     } finally {
       setDeleting(false);
     }

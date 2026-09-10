@@ -10,6 +10,7 @@ import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
 import { LoadingState } from "@/components/LoadingState";
+import { useToast } from "@/components/Toast";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { BackgroundPicker, type BackgroundChoice } from "@/components/BackgroundPicker";
 import { absoluteUrl, createJob, deleteJob, EXPLICIT_WHITE_BACKGROUND, KEEP_ORIGINAL_BACKGROUND } from "@/lib/api";
@@ -37,6 +38,7 @@ export default function DashboardPage() {
   const [pendingDeleteJob, setPendingDeleteJob] = useState<JobSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const fabFileInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   function resetForm() {
     setFiles([]);
@@ -61,6 +63,9 @@ export default function DashboardPage() {
     try {
       await deleteJob(pendingDeleteJob.id);
       setPendingDeleteJob(null);
+      toast.success("Catálogo eliminado.");
+    } catch {
+      toast.error("No se pudo eliminar el catálogo. Intenta de nuevo.");
     } finally {
       setDeleting(false);
     }

@@ -12,6 +12,7 @@ import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { LoadingState } from "@/components/LoadingState";
 import { ProductEditModal } from "@/components/ProductEditModal";
+import { useToast } from "@/components/Toast";
 import { absoluteUrl, addProduct, deleteJob, deleteProduct, updateCatalog } from "@/lib/api";
 import { useJob } from "@/lib/hooks";
 import type { Job, ProductRecord } from "@/lib/types";
@@ -42,6 +43,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   const [downloadingImages, setDownloadingImages] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   if (error) {
     return (
@@ -108,9 +110,13 @@ export function CatalogClient({ jobId }: { jobId: string }) {
 
   async function copyLink() {
     if (!publicUrl) return;
-    await navigator.clipboard.writeText(publicUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("No se pudo copiar el link.");
+    }
   }
 
   function startEditingMeta() {
@@ -135,6 +141,9 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     try {
       mutate(await updateCatalog(jobId, patch));
       setEditingMeta(false);
+      toast.success("Catálogo actualizado.");
+    } catch {
+      toast.error("No se pudo guardar. Intenta de nuevo.");
     } finally {
       setSavingMeta(false);
     }
@@ -144,9 +153,14 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     if (!pendingDelete) return;
     const product = pendingDelete;
     setPendingDelete(null);
-    const updated = await deleteProduct(jobId, product.id);
-    mutate(updated);
-    if (selected?.id === product.id) setSelected(null);
+    try {
+      const updated = await deleteProduct(jobId, product.id);
+      mutate(updated);
+      if (selected?.id === product.id) setSelected(null);
+      toast.success("Producto eliminado.");
+    } catch {
+      toast.error("No se pudo eliminar el producto. Intenta de nuevo.");
+    }
   }
 
   async function confirmDeleteCatalog() {
@@ -154,6 +168,8 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     try {
       await deleteJob(jobId);
       router.push("/");
+    } catch {
+      toast.error("No se pudo eliminar el catálogo. Intenta de nuevo.");
     } finally {
       setDeletingCatalog(false);
     }

@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { ErrorBanner } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
 import { LoadingState } from "@/components/LoadingState";
+import { useToast } from "@/components/Toast";
 import { updateAgentSettings } from "@/lib/api";
 import { useAgentSettings } from "@/lib/hooks";
 import type { AgentSettings } from "@/lib/types";
@@ -51,19 +52,19 @@ function SettingsForm({
 }) {
   const [draft, setDraft] = useState<AgentSettings>(settings);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const toast = useToast();
 
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(settings), [draft, settings]);
 
   async function save() {
     if (!dirty) return;
     setSaving(true);
-    setSaveError(null);
     try {
       const updated = await updateAgentSettings(draft);
       onSaved(updated);
+      toast.success("Reglas guardadas.");
     } catch {
-      setSaveError("No se pudieron guardar las reglas. Intenta de nuevo.");
+      toast.error("No se pudieron guardar las reglas. Intenta de nuevo.");
     } finally {
       setSaving(false);
     }
@@ -85,8 +86,6 @@ function SettingsForm({
           onChange={(v) => setDraft({ ...draft, catalog_rules: v })}
         />
       </div>
-
-      {saveError && <ErrorBanner message={saveError} />}
 
       <div className="flex items-center justify-end gap-3">
         {dirty && !saving && (

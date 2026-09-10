@@ -23,8 +23,11 @@ export function ProductEditModal({
   const after = absoluteUrl(product.image.composed_path);
 
   async function handleClose() {
-    await editorRef.current?.saveIfDirty();
-    onClose();
+    // Si `saveIfDirty` falla, el toast de error queda visible en pantalla y
+    // el modal se queda abierto para que el usuario pueda reintentar en vez
+    // de perder el cambio sin darse cuenta.
+    const ok = await editorRef.current?.saveIfDirty();
+    if (ok !== false) onClose();
   }
 
   return (

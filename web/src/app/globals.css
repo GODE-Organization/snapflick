@@ -159,3 +159,17 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Ni el navegador ni Tailwind ponen cursor:pointer en <button> por defecto
+   (decisión deliberada de Tailwind, no un descuido) — sin esto, cada botón
+   nuevo necesita acordarse de agregar `cursor-pointer` a mano. */
+@layer base {
+  button:not(:disabled),
+  [role="button"],
+  [role="switch"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}

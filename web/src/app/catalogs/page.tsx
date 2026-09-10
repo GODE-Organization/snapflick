@@ -8,6 +8,7 @@ import { Fab } from "@/components/Fab";
 import { Icon } from "@/components/Icon";
 import { JobStatusChip } from "@/components/JobStatusChip";
 import { LoadingState } from "@/components/LoadingState";
+import { useToast } from "@/components/Toast";
 import { absoluteUrl, deleteJob } from "@/lib/api";
 import { useJobs } from "@/lib/hooks";
 import type { JobSummary, JobStatus } from "@/lib/types";
@@ -28,6 +29,7 @@ export default function CatalogsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [pendingDeleteJob, setPendingDeleteJob] = useState<JobSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const toast = useToast();
 
   const filteredJobs = useMemo(() => {
     if (!jobs) return undefined;
@@ -44,6 +46,9 @@ export default function CatalogsPage() {
     try {
       await deleteJob(pendingDeleteJob.id);
       setPendingDeleteJob(null);
+      toast.success("Catálogo eliminado.");
+    } catch {
+      toast.error("No se pudo eliminar el catálogo. Intenta de nuevo.");
     } finally {
       setDeleting(false);
     }
