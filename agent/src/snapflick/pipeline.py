@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from .agent_settings import get_agent_settings
 from .agents.catalog_agent import build_catalog_agent, plan_catalog
 from .agents.vision_agent import PROMPT_VERSION, build_vision_agent, extract_product_sheet
 from .config import settings
@@ -96,23 +97,27 @@ def _friendly_error_message(exc: Exception) -> str:
     return f"No se pudo procesar la imagen ({type(exc).__name__}): {exc}"
 
 
-def _cache_key(image_bytes: bytes) -> str:
+def _cache_key(image_bytes: bytes, product_rules: str = "") -> str:
     """Clave del caché de extracción: hash de (proveedor, modelo, versión de
-    prompt, contenido de la imagen), no solo la imagen — así un cambio de
-    prompt o de proveedor invalida el caché en vez de seguir sirviendo
-    resultados viejos silenciosamente."""
+    prompt, reglas del usuario, contenido de la imagen), no solo la imagen —
+    así un cambio de prompt, de proveedor o de las reglas definidas en
+    /ajustes-ia invalida el caché en vez de seguir sirviendo resultados viejos
+    silenciosamente."""
     image_hash = hashlib.sha256(image_bytes).hexdigest()
-    combo = f"{resolved_provider()}|{resolved_model_id()}|{PROMPT_VERSION}|{image_hash}"
+    rules_hash = hashlib.sha256(product_rules.encode()).hexdigest()
+    combo = (
+        f"{resolved_provider()}|{resolved_model_id()}|{PROMPT_VERSION}|{rules_hash}|{image_hash}"
+    )
     return f"cache/{hashlib.sha256(combo.encode()).hexdigest()}.json"
 
 
-def _cached_extract_product_sheet(src: str, agent) -> ProductSheet:
+def _cached_extract_product_sheet(src: str, agent, product_rules: str = "") -> ProductSheet:
     """Como `extract_product_sheet`, pero reutiliza el resultado si ya se
-    procesó esta misma imagen con este mismo proveedor/modelo/prompt. Evita
-    gastar cuota de la capa gratuita al repetir la demo o al iterar en
+    procesó esta misma imagen con este mismo proveedor/modelo/prompt/reglas.
+    Evita gastar cuota de la capa gratuita al repetir la demo o al iterar en
     desarrollo."""
     image_bytes = Path(src).read_bytes()
-    key = _cache_key(image_bytes)
+    key = _cache_key(image_bytes, product_rules)
     storage = get_storage()
 
     if storage.exists(key):
@@ -131,7 +136,12 @@ def _cached_extract_product_sheet(src: str, agent) -> ProductSheet:
 
 
 def _process_one_image(
-    src: str, background_path: str | None, processed_dir: Path, vision, file_id: str
+    src: str,
+    background_path: str | None,
+    processed_dir: Path,
+    vision,
+    file_id: str,
+    product_rules: str = "",
 ) -> tuple[ProcessedImage, ProductSheet | None, str | None]:
     """Recorte + composición + miniatura + extracción para una sola imagen.
 
@@ -157,7 +167,7 @@ def _process_one_image(
         img.thumbnail_path = make_thumbnail(
             img.composed_path, str(processed_dir / f"{file_id}_thumb.jpg")
         )
-        sheet = _cached_extract_product_sheet(src, agent=vision)
+        sheet = _cached_extract_product_sheet(src, agent=vision, product_rules=product_rules)
         return img, sheet, None
     except Exception as exc:  # una imagen mala no puede tumbar el lote
         log.exception("Fallo procesando %s", src)
@@ -193,7 +203,8 @@ def run_job(
     processed_dir.mkdir(parents=True, exist_ok=True)
     cat_dir = root / catalog_dir(job.id)
 
-    vision = build_vision_agent()
+    agent_settings = get_agent_settings(job.session_id)
+    vision = build_vision_agent(agent_settings.product_rules)
 
     for src in image_paths:
         bg = (
@@ -202,7 +213,9 @@ def run_job(
             else background_path
         )
         product_id = uuid.uuid4().hex[:8]
-        img, sheet, err = _process_one_image(src, bg, processed_dir, vision, product_id)
+        img, sheet, err = _process_one_image(
+            src, bg, processed_dir, vision, product_id, agent_settings.product_rules
+        )
         if sheet is not None:
             job.products.append(
                 ProductRecord(id=product_id, sheet=sheet, image=img, background_key=bg)
@@ -219,7 +232,9 @@ def run_job(
             on_update(job)
         return job
 
-    job.plan = with_retry(plan_catalog, job.products, agent=build_catalog_agent())
+    job.plan = with_retry(
+        plan_catalog, job.products, agent=build_catalog_agent(agent_settings.catalog_rules)
+    )
     for a in job.plan.assignments:
         for p in job.products:
             if p.id == a.product_id:
@@ -239,6 +254,7 @@ def add_product_to_job(
     image_path: str,
     background_path: str | None = None,
     workdir: Path | None = None,
+    session_id: str | None = None,
 ) -> ProductRecord:
     """Agrega un producto a un job ya publicado (`job.status == DONE`).
 
@@ -252,16 +268,25 @@ def add_product_to_job(
     `job.errors` — se propaga como excepción, porque es una acción puntual
     del administrador que espera una respuesta directa (éxito o error), no
     parte de un lote donde una imagen mala no debe tumbar las demás.
+
+    `session_id` son las reglas de QUIÉN está agregando el producto ahora
+    (el `session_id` de la request en `main.py`), no las de `job.session_id`
+    — un job publicado antes de que `Job.session_id` existiera tiene ese
+    campo en `None` (ver el comentario en `models/schemas.py`), y cayendo de
+    vuelta a `job.session_id` ahí siempre se ignorarían las reglas de
+    /ajustes-ia del visitante actual, sin importar cuáles tenga guardadas.
+    Si no se pasa (p.ej. desde `cli.py`), cae de vuelta a `job.session_id`.
     """
     root = Path(workdir or settings.data_dir)
     processed_dir = root / upload_processed_dir(job.id)
     processed_dir.mkdir(parents=True, exist_ok=True)
     cat_dir = root / catalog_dir(job.id)
 
-    vision = build_vision_agent()
+    agent_settings = get_agent_settings(session_id if session_id is not None else job.session_id)
+    vision = build_vision_agent(agent_settings.product_rules)
     product_id = uuid.uuid4().hex[:8]
     img, sheet, err = _process_one_image(
-        image_path, background_path, processed_dir, vision, product_id
+        image_path, background_path, processed_dir, vision, product_id, agent_settings.product_rules
     )
     if sheet is None:
         raise RuntimeError(err or "No se pudo procesar la imagen")
@@ -271,7 +296,9 @@ def add_product_to_job(
     job.total_images += 1
     job.processed_images += 1
 
-    job.plan = with_retry(plan_catalog, job.products, agent=build_catalog_agent())
+    job.plan = with_retry(
+        plan_catalog, job.products, agent=build_catalog_agent(agent_settings.catalog_rules)
+    )
     for a in job.plan.assignments:
         for p in job.products:
             if p.id == a.product_id:

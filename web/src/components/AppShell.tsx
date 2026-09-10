@@ -11,8 +11,8 @@ const NAV = [
 ];
 
 const QUICK_ACTIONS = [
-  { href: "/", label: "Nuevo lote", icon: "add_circle", color: "text-electric-indigo" },
-  { href: "/", label: "Generador IA", icon: "auto_awesome", color: "text-vivid-cyan" },
+  { href: "/", label: "Nuevo catálogo", icon: "add_circle", color: "text-electric-indigo" },
+  { href: "/ajustes-ia", label: "Ajustes", icon: "tune", color: "text-vivid-cyan" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

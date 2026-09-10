@@ -39,8 +39,15 @@ Reglas estrictas:
 """
 
 
-def build_vision_agent() -> Agent:
-    return Agent(model=build_model(), system_prompt=SYSTEM_PROMPT)
+def build_vision_agent(custom_rules: str = "") -> Agent:
+    """`custom_rules` son las reglas que el usuario definió en /ajustes-ia
+    (`AgentSettings.product_rules`, ver `agent_settings.py`) — se appendean al
+    prompt base en vez de reemplazarlo, para no perder las reglas estrictas
+    (no inventar datos, etc.) que garantizan la calidad de la extracción."""
+    system_prompt = SYSTEM_PROMPT
+    if custom_rules.strip():
+        system_prompt += f"\n\nReglas adicionales definidas por el usuario:\n{custom_rules.strip()}"
+    return Agent(model=build_model(), system_prompt=system_prompt)
 
 
 def extract_product_sheet(image_path: str, agent: Agent | None = None) -> ProductSheet:

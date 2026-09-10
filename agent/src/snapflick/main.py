@@ -29,10 +29,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .agent_settings import get_agent_settings, save_agent_settings
 from .config import settings
 from .job_store import get_job_store
 from .model_provider import warmup_model
-from .models.schemas import Job, JobStatus
+from .models.schemas import AgentSettings, Job, JobStatus
 from .paths import background_key, catalog_dir, upload_original_dir
 from .pipeline import (
     KEEP_ORIGINAL_BACKGROUND,
@@ -839,7 +840,7 @@ def add_product(
         _require_background_owner(background_key, session_id)
     bg_path = _resolve_background_path(background_key) if background_key else job.background_key
     try:
-        add_product_to_job(job, str(dest), bg_path)
+        add_product_to_job(job, str(dest), bg_path, session_id=session_id)
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -1020,3 +1021,26 @@ def delete_background(key: str, session_id: str = Depends(session_dependency)) -
         _set_default_background_key(None)
     _delete_background_owner(key)
     return {"background_key": key, "deleted": True}
+
+
+class AgentSettingsUpdate(BaseModel):
+    """Ambos campos opcionales: el frontend solo envía lo que el usuario tocó."""
+
+    product_rules: str | None = None
+    catalog_rules: str | None = None
+
+
+@app.get("/settings", response_model=AgentSettings)
+def get_settings(session_id: str = Depends(session_dependency)) -> AgentSettings:
+    """Reglas de agente del visitante actual (ver /ajustes-ia), vacías por
+    defecto si todavía no guardó nada."""
+    return get_agent_settings(session_id)
+
+
+@app.patch("/settings", response_model=AgentSettings)
+def update_settings(
+    payload: AgentSettingsUpdate, session_id: str = Depends(session_dependency)
+) -> AgentSettings:
+    current = get_agent_settings(session_id)
+    updated = current.model_copy(update=payload.model_dump(exclude_unset=True))
+    return save_agent_settings(session_id, updated)

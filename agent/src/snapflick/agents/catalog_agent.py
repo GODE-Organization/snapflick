@@ -40,8 +40,13 @@ Reglas:
 """
 
 
-def build_catalog_agent() -> Agent:
-    return Agent(model=build_model(), system_prompt=SYSTEM_PROMPT)
+def build_catalog_agent(custom_rules: str = "") -> Agent:
+    """`custom_rules` son las reglas que el usuario definió en /ajustes-ia
+    (`AgentSettings.catalog_rules`, ver `agent_settings.py`)."""
+    system_prompt = SYSTEM_PROMPT
+    if custom_rules.strip():
+        system_prompt += f"\n\nReglas adicionales definidas por el usuario:\n{custom_rules.strip()}"
+    return Agent(model=build_model(), system_prompt=system_prompt)
 
 
 def plan_catalog(products: list[ProductRecord], agent: Agent | None = None) -> CatalogPlan:

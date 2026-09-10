@@ -92,6 +92,19 @@ class CatalogPlan(BaseModel):
     catalog_summary: str
 
 
+class AgentSettings(BaseModel):
+    """Reglas en texto libre, definidas por el usuario, que se appendean a los
+    `SYSTEM_PROMPT` de `VisionAgent`/`CatalogAgent` (ver `agent_settings.py`).
+    Guardadas por `session_id` — mismo criterio que los fondos guardados."""
+
+    product_rules: str = Field(
+        default="", description="Reglas extra para el VisionAgent (descripciones de producto)"
+    )
+    catalog_rules: str = Field(
+        default="", description="Reglas extra para el CatalogAgent (categorías, título, resumen)"
+    )
+
+
 class Job(BaseModel):
     id: str
     status: JobStatus = JobStatus.PENDING

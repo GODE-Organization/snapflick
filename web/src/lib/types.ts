@@ -81,3 +81,8 @@ export interface BackgroundOption {
   url: string;
   is_default: boolean;
 }
+
+export interface AgentSettings {
+  product_rules: string;
+  catalog_rules: string;
+}

@@ -1,4 +1,4 @@
-import type { BackgroundOption, Job, ProductSheet } from "./types";
+import type { AgentSettings, BackgroundOption, Job, ProductSheet } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 export const WS_URL = API_URL.replace(/^http/, "ws");
@@ -143,6 +143,21 @@ export async function deleteBackground(backgroundKey: string): Promise<void> {
     method: "DELETE",
   });
   await asJson(res);
+}
+
+export async function getAgentSettings(): Promise<AgentSettings> {
+  const res = await fetch(`${API_URL}/settings`, WITH_SESSION);
+  return asJson(res);
+}
+
+export async function updateAgentSettings(patch: Partial<AgentSettings>): Promise<AgentSettings> {
+  const res = await fetch(`${API_URL}/settings`, {
+    ...WITH_SESSION,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return asJson(res);
 }
 
 export async function setDefaultBackground(

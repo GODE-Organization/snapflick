@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { WS_URL, listBackgrounds } from "./api";
+import { WS_URL, getAgentSettings, listBackgrounds } from "./api";
 import type { Job, JobSummary } from "./types";
 
 const RECONNECT_DELAY_MS = 2000;
@@ -89,4 +89,8 @@ export function useJob(id: string | undefined): SocketResult<Job> {
 
 export function useBackgrounds() {
   return useSWR("backgrounds", listBackgrounds);
+}
+
+export function useAgentSettings() {
+  return useSWR("agent-settings", getAgentSettings);
 }

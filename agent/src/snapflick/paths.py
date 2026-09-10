@@ -27,3 +27,7 @@ def background_key(name: str) -> str:
 
 def job_state_key(job_id: str) -> str:
     return f"jobs/{job_id}.json"
+
+
+def agent_settings_key(session_id: str) -> str:
+    return f"settings/{session_id}.json"
