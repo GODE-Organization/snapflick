@@ -27,7 +27,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agent_settings import get_agent_settings, save_agent_settings
 from .config import settings
@@ -1032,10 +1032,12 @@ def delete_background(key: str, session_id: str = Depends(session_dependency)) -
 
 
 class AgentSettingsUpdate(BaseModel):
-    """Ambos campos opcionales: el frontend solo envía lo que el usuario tocó."""
+    """Ambos campos opcionales: el frontend solo envía lo que el usuario tocó.
+    `max_length` replica el límite de `AgentSettings` (ver models/schemas.py)
+    para que un PATCH rechace un payload demasiado largo antes de mezclarlo."""
 
-    product_rules: str | None = None
-    catalog_rules: str | None = None
+    product_rules: str | None = Field(default=None, max_length=1000)
+    catalog_rules: str | None = Field(default=None, max_length=1000)
 
 
 @app.get("/settings", response_model=AgentSettings)

@@ -32,6 +32,7 @@ function RulesField({
         onChange={(e) => onChange(e.target.value)}
         placeholder="Sin reglas adicionales"
         rows={6}
+        maxLength={1000}
         className="w-full resize-none rounded-xl border border-transparent bg-surface-off-white px-4 py-3 text-body-md text-on-background outline-none transition-colors placeholder:text-on-surface-variant/50 focus:border-primary focus:bg-surface"
       />
     </div>
@@ -115,6 +116,10 @@ export default function AjustesIaPage() {
           <p className="mt-1 text-body-md text-on-surface-variant">
             Reglas propias que el agente sigue al redactar descripciones de producto y al armar
             el catálogo — tono, qué evitar, cómo agrupar categorías, etc.
+          </p>
+          <p className="mt-1 text-body-sm text-on-surface-variant/70">
+            Solo se aplican reglas sobre el catálogo, los productos, las imágenes o las
+            descripciones — el agente ignora cualquier instrucción que se salga de ese ámbito.
           </p>
         </div>
 

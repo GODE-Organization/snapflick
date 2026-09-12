@@ -97,11 +97,19 @@ class AgentSettings(BaseModel):
     `SYSTEM_PROMPT` de `VisionAgent`/`CatalogAgent` (ver `agent_settings.py`).
     Guardadas por `session_id` — mismo criterio que los fondos guardados."""
 
+    # max_length es una defensa adicional (no la principal) contra inyección de
+    # prompt: acota cuánto texto arbitrario del usuario final termina dentro del
+    # system prompt del agente. El acotamiento real de alcance vive en
+    # `CUSTOM_RULES_GUARD` (vision_agent.py / catalog_agent.py).
     product_rules: str = Field(
-        default="", description="Reglas extra para el VisionAgent (descripciones de producto)"
+        default="",
+        max_length=1000,
+        description="Reglas extra para el VisionAgent (descripciones de producto)",
     )
     catalog_rules: str = Field(
-        default="", description="Reglas extra para el CatalogAgent (categorías, título, resumen)"
+        default="",
+        max_length=1000,
+        description="Reglas extra para el CatalogAgent (categorías, título, resumen)",
     )
 
 
