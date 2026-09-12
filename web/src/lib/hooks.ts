@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { WS_URL, getAgentSettings, listBackgrounds } from "./api";
+import { WS_URL, getAgentSettings, getPublicCatalog, listBackgrounds } from "./api";
 import type { Job, JobSummary } from "./types";
 
 const RECONNECT_DELAY_MS = 2000;
@@ -93,4 +93,8 @@ export function useBackgrounds() {
 
 export function useAgentSettings() {
   return useSWR("agent-settings", getAgentSettings);
+}
+
+export function usePublicCatalog(jobId: string) {
+  return useSWR(["public-catalog", jobId], () => getPublicCatalog(jobId));
 }

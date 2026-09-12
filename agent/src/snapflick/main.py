@@ -41,7 +41,12 @@ from .pipeline import (
     recompose_product_background,
     run_job,
 )
-from .tools.catalog_tools import export_catalog_json, render_catalog_html, render_catalog_pdf
+from .tools.catalog_tools import (
+    _grouped_visible_products,
+    export_catalog_json,
+    render_catalog_html,
+    render_catalog_pdf,
+)
 from .tools.image_tools import _get_session as _get_rembg_session
 from .tools.storage_tools import get_storage
 
@@ -637,6 +642,68 @@ def get_job(job_id: str, session_id: str = Depends(session_dependency)) -> dict:
     job = JOBS[job_id]
     _require_owner(job, session_id)
     return job_to_public_dict(job)
+
+
+class PublicCatalogProduct(BaseModel):
+    id: str
+    name: str
+    brand: str | None
+    presentation: str | None
+    description: str
+    keywords: list[str]
+    category: str
+    image_url: str | None
+
+
+class PublicCatalog(BaseModel):
+    """Forma de datos para la vista pública del catálogo (`web/src/app/c/[jobId]`)
+    — un subconjunto de `Job` sin `session_id`, `errors`, ni paths internos, y
+    sin los productos ocultos. Deliberadamente separado de `job_to_public_dict`
+    (que sí expone todo `Job`) para no filtrar detalles internos a cualquiera
+    con el link."""
+
+    id: str
+    catalog_title: str
+    catalog_summary: str
+    categories: list[str]
+    products: list[PublicCatalogProduct]
+
+
+@app.get("/public/jobs/{job_id}", response_model=PublicCatalog)
+def get_public_catalog(job_id: str) -> PublicCatalog:
+    """Sin `session_dependency`: a propósito, es la misma exposición sin auth
+    que hoy tiene `catalog_html_path` vía /files, solo que como datos en vez
+    de HTML autocontenido. 404 (no un payload vacío) para un job inexistente,
+    todavía procesándose, o sin `plan` — un link a un catálogo no publicado
+    debe verse igual que un link roto."""
+    job = JOBS.get(job_id)
+    if job is None or job.status != JobStatus.DONE or job.plan is None:
+        raise HTTPException(404, "Catálogo no encontrado")
+    grouped = _grouped_visible_products(job)
+    products = [
+        PublicCatalogProduct(
+            id=record.id,
+            name=record.sheet.name,
+            brand=record.sheet.brand,
+            presentation=record.sheet.presentation,
+            description=record.sheet.description,
+            keywords=record.sheet.keywords,
+            category=category,
+            image_url=_to_url(
+                record.image.composed_path or record.image.thumbnail_path,
+                version=record.image.version,
+            ),
+        )
+        for category in job.plan.categories
+        for record in grouped.get(category, [])
+    ]
+    return PublicCatalog(
+        id=job.id,
+        catalog_title=job.plan.catalog_title,
+        catalog_summary=job.plan.catalog_summary,
+        categories=job.plan.categories,
+        products=products,
+    )
 
 
 @app.delete("/jobs/{job_id}")

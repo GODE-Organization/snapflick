@@ -80,7 +80,11 @@ export function CatalogClient({ jobId }: { jobId: string }) {
     );
   }
 
-  const publicUrl = absoluteUrl(job.catalog_html_path);
+  // Ruta pública propia del sitio (`web/src/app/c/[jobId]`), no el HTML
+  // autocontenido que sigue generando el agente (ese solo se mantiene para no
+  // romper links ya compartidos). `window` porque este componente es
+  // client-only y necesitamos el origen real (dev/staging/prod).
+  const publicUrl = typeof window !== "undefined" ? `${window.location.origin}/c/${jobId}` : null;
   const jsonUrl = absoluteUrl(job.catalog_json_path);
   const pdfUrl = absoluteUrl(job.catalog_pdf_path);
   const categories = job.plan?.categories ?? [
@@ -342,7 +346,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                   <input
                     readOnly
                     title={publicUrl}
-                    value={`.../${jobId}`}
+                    value={`.../c/${jobId}`}
                     className="w-full truncate border-none bg-transparent py-2 font-mono text-label-md text-on-background outline-none"
                   />
                   <button

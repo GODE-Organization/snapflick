@@ -1,4 +1,4 @@
-import type { AgentSettings, BackgroundOption, Job, ProductSheet } from "./types";
+import type { AgentSettings, BackgroundOption, Job, ProductSheet, PublicCatalog } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 export const WS_URL = API_URL.replace(/^http/, "ws");
@@ -157,6 +157,13 @@ export async function updateAgentSettings(patch: Partial<AgentSettings>): Promis
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
+  return asJson(res);
+}
+
+/** Sin `WITH_SESSION`: /public/jobs/{id} es la única ruta que a propósito
+ * nunca manda la cookie de sesión — la ve cualquiera con el link, sin dueño. */
+export async function getPublicCatalog(jobId: string): Promise<PublicCatalog> {
+  const res = await fetch(`${API_URL}/public/jobs/${jobId}`);
   return asJson(res);
 }
 

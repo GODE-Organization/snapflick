@@ -86,3 +86,26 @@ export interface AgentSettings {
   product_rules: string;
   catalog_rules: string;
 }
+
+/** Espejo de `PublicCatalogProduct`/`PublicCatalog` en main.py — el
+ * subconjunto de `Job`/`ProductRecord` que ve un visitante anónimo en
+ * /c/[jobId], sin productos ocultos ni campos internos (session_id, errors,
+ * paths de filesystem). */
+export interface PublicCatalogProduct {
+  id: string;
+  name: string;
+  brand: string | null;
+  presentation: string | null;
+  description: string;
+  keywords: string[];
+  category: string;
+  image_url: string | null;
+}
+
+export interface PublicCatalog {
+  id: string;
+  catalog_title: string;
+  catalog_summary: string;
+  categories: string[];
+  products: PublicCatalogProduct[];
+}
