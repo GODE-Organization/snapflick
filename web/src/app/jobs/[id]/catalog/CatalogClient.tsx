@@ -85,7 +85,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
   // romper links ya compartidos). `window` porque este componente es
   // client-only y necesitamos el origen real (dev/staging/prod).
   const publicUrl = typeof window !== "undefined" ? `${window.location.origin}/c/${jobId}` : null;
-  const jsonUrl = absoluteUrl(job.catalog_json_path);
+  //const jsonUrl = absoluteUrl(job.catalog_json_path);
   const pdfUrl = absoluteUrl(job.catalog_pdf_path);
   const categories = job.plan?.categories ?? [
     ...new Set(job.products.map((p) => p.sheet.category ?? "Sin categoría")),
@@ -397,7 +397,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                     Exportar
                   </h3>
                   <div className="space-y-2">
-                    {jsonUrl && (
+                    {/* {jsonUrl && (
                       <a
                         href={jsonUrl}
                         target="_blank"
@@ -412,7 +412,7 @@ export function CatalogClient({ jobId }: { jobId: string }) {
                         </div>
                         <Icon name="download" className="text-on-surface-variant opacity-0 transition-opacity group-hover:opacity-100" />
                       </a>
-                    )}
+                    )} */}
                     {pdfUrl && (
                       <a
                         href={pdfUrl}
