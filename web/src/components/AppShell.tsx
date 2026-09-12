@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 
@@ -17,6 +18,8 @@ const QUICK_ACTIONS = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const closeMobileMenu = () => setMobileMenuOpen(false);
 
   return (
     <>
@@ -56,7 +59,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           </div> */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            aria-expanded={mobileMenuOpen}
+            aria-label={mobileMenuOpen ? "Cerrar menú" : "Abrir menú"}
+            className="rounded-full p-2 text-on-surface-variant transition-all hover:bg-surface-container-high md:hidden"
+          >
+            <Icon name={mobileMenuOpen ? "close" : "menu"} />
+          </button>
         </div>
+
+        {mobileMenuOpen && (
+          <nav className="max-h-[calc(100vh-64px)] overflow-y-auto border-t border-outline-variant bg-surface px-4 py-4 md:hidden">
+            <div className="space-y-1">
+              {NAV.map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  onClick={closeMobileMenu}
+                  className={`block rounded-xl px-4 py-3 font-mono text-label-md transition-colors ${
+                    pathname === item.href
+                      ? "bg-surface-container-high font-bold text-primary"
+                      : "text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+            <div className="my-3 border-t border-outline-variant" />
+            <div className="mb-2 px-4">
+              <span className="font-mono text-label-sm uppercase tracking-widest text-on-surface-variant">
+                Acciones rápidas
+              </span>
+            </div>
+            <div className="space-y-1">
+              {QUICK_ACTIONS.map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  onClick={closeMobileMenu}
+                  className="group flex items-center rounded-xl px-4 py-3 text-on-surface-variant transition-all hover:bg-surface-container-high"
+                >
+                  <Icon name={item.icon} className={`mr-3 ${item.color}`} />
+                  <span className="font-mono text-label-md">{item.label}</span>
+                </Link>
+              ))}
+            </div>
+          </nav>
+        )}
       </header>
 
       <aside className="fixed left-0 top-16 z-40 hidden h-[calc(100vh-64px)] w-64 flex-col border-r border-outline-variant bg-surface-container-lowest py-6 lg:flex">
