@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
@@ -120,7 +121,13 @@ export default function DashboardPage() {
             </div>
             <div className="relative hidden h-48 w-48 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-container-low shadow-inner lg:flex">
               <div className="absolute inset-0 animate-spin-slow bg-gradient-to-br from-primary/10 to-transparent" />
-              <Icon name="auto_fix_high" className="relative z-10 text-6xl text-primary" filled />
+              <Image
+                src="/snapflick-logo-negative.svg"
+                alt="SnapFlick"
+                width={112}
+                height={112}
+                className="relative z-10 h-28 w-28"
+              />
             </div>
           </div>
         </div>
