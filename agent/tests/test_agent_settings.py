@@ -6,7 +6,12 @@ extracción (ver "Gemini rate limits and extraction caching" en CLAUDE.md)."""
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
+
+import snapflick.agents.catalog_agent as catalog_agent_module
+import snapflick.agents.vision_agent as vision_agent_module
 import snapflick.main as main_module
 import snapflick.pipeline as pipeline_module
 from snapflick.agent_settings import get_agent_settings, save_agent_settings
@@ -15,6 +20,22 @@ from snapflick.agents.catalog_agent import build_catalog_agent
 from snapflick.agents.vision_agent import SYSTEM_PROMPT as VISION_SYSTEM_PROMPT
 from snapflick.agents.vision_agent import build_vision_agent
 from snapflick.models.schemas import AgentSettings, Job, JobStatus, ProductSheet
+
+
+@pytest.fixture(autouse=True)
+def _fake_model(monkeypatch):
+    """`build_vision_agent`/`build_catalog_agent` llaman `build_model()`, que en
+    CI no tiene ningún proveedor real disponible (sin credenciales AWS, sin
+    `google-genai`/`openai`/`ollama` instalados — ver model_provider.py). Estos
+    tests solo verifican la construcción del `system_prompt`, nunca hacen una
+    llamada real al modelo, así que alcanza con un `Model` de Strands de juguete
+    en vez de resolver un proveedor de verdad."""
+    from strands.models.model import Model
+
+    fake_model = MagicMock(spec=Model)
+    fake_model.stateful = False
+    monkeypatch.setattr(vision_agent_module, "build_model", lambda: fake_model)
+    monkeypatch.setattr(catalog_agent_module, "build_model", lambda: fake_model)
 
 
 def _setup(tmp_path: Path, monkeypatch) -> None:
