@@ -19,6 +19,10 @@ from snapflick.models.schemas import AgentSettings, Job, JobStatus, ProductSheet
 
 def _setup(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y los settings se guarden/lean contra
+    # el bucket de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(main_module.settings, "s3_bucket", None)
 
 
 def test_get_agent_settings_sin_sesion_devuelve_default_sin_tocar_storage(tmp_path, monkeypatch):

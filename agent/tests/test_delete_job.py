@@ -13,6 +13,10 @@ from snapflick.models.schemas import Job, JobStatus
 def _setup(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
     monkeypatch.setattr(main_module, "STORE", JobStore(tmp_path / "jobs.db"))
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y el test borre/liste contra el bucket
+    # de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(main_module.settings, "s3_bucket", None)
 
 
 def test_delete_job_borra_registro_y_artefactos(tmp_path, monkeypatch):

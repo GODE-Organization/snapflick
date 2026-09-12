@@ -3,7 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# `pydantic-settings` (env_file=".env" abajo) solo vuelca a `Settings` las
+# variables que matchean un campo del modelo (prefijo SNAPFLICK_) — nunca las
+# escribe en `os.environ`. boto3 lee credenciales AWS (AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION) directo de `os.environ`, así que
+# sin este `load_dotenv()` tenerlas en agent/.env no alcanza — silenciosamente
+# nunca llegan al proceso y boto3 falla con `NoCredentialsError` recién al
+# primer request a AWS (S3, no acá). Sin argumentos, busca `.env` desde el cwd
+# hacia arriba, igual que `env_file=".env"` de abajo (todo se corre con
+# cwd=agent/, ver Makefile) — y no pisa variables que la shell ya exportó.
+load_dotenv()
 
 
 class Settings(BaseSettings):

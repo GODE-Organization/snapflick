@@ -70,6 +70,10 @@ def test_run_job_muta_el_mismo_objeto_que_recibe(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
     monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y el caché de extracción/artefactos se
+    # lea/escriba contra el bucket de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(pipeline_module.settings, "s3_bucket", None)
 
     job = Job(id="job-progress", total_images=3)
     image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(3)]
@@ -95,6 +99,7 @@ def test_process_actualiza_el_job_que_vive_en_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
     monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(main_module.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(main_module.settings, "s3_bucket", None)
     # STORE ya se construyó al importar main.py, apuntando al data_dir real —
     # redirigirlo aquí evita que este test escriba jobs falsos en la base de
     # datos de desarrollo.
@@ -138,6 +143,10 @@ def test_run_job_reusa_el_cache_de_extraccion_para_la_misma_imagen(tmp_path, mon
     monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
     monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y el caché de extracción/artefactos se
+    # lea/escriba contra el bucket de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(pipeline_module.settings, "s3_bucket", None)
 
     image_path = tmp_path / "same_photo.jpg"
     image_path.write_bytes(b"identical-bytes")
@@ -168,6 +177,10 @@ def test_run_job_asigna_fondo_por_imagen(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
     monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y el caché de extracción/artefactos se
+    # lea/escriba contra el bucket de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(pipeline_module.settings, "s3_bucket", None)
 
     image_paths = [str(tmp_path / f"foto{i}.jpg") for i in range(2)]
     for p in image_paths:
@@ -205,6 +218,10 @@ def test_run_job_mantener_original_no_llama_a_remove_background(tmp_path, monkey
     monkeypatch.setattr(pipeline_module, "resolved_provider", lambda: "fake")
     monkeypatch.setattr(pipeline_module, "resolved_model_id", lambda: "fake-model")
     monkeypatch.setattr(pipeline_module.settings, "data_dir", tmp_path)
+    # Sin esto, un `.env` de dev con SNAPFLICK_S3_BUCKET real haría que
+    # get_storage() devuelva S3Storage y el caché de extracción/artefactos se
+    # lea/escriba contra el bucket de verdad en vez de aislarse en tmp_path.
+    monkeypatch.setattr(pipeline_module.settings, "s3_bucket", None)
 
     image_path = tmp_path / "foto.jpg"
     image_path.write_bytes(b"fake-source")
