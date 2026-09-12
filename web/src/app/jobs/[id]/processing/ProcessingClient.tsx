@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
@@ -22,6 +22,44 @@ function currentStepIndex(pct: number) {
   if (pct >= 60) return 2;
   if (pct >= 25) return 1;
   return 0;
+}
+
+const THUMB_RETRY_DELAYS_MS = [500, 1500, 3000];
+
+function ProductThumb({ src, alt }: { src: string; alt: string }) {
+  const [state, setState] = useState({ src, attempt: 0 });
+
+  if (state.src !== src) {
+    setState({ src, attempt: 0 });
+  }
+  const attempt = state.src === src ? state.attempt : 0;
+  const setAttempt = (next: number) => setState({ src, attempt: next });
+
+  if (attempt > THUMB_RETRY_DELAYS_MS.length) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-surface-container-low text-on-surface-variant">
+        <Icon name="error" className="text-error" />
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      key={attempt}
+      src={src}
+      alt={alt}
+      className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+      onError={() => {
+        const delay = THUMB_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          setAttempt(attempt + 1);
+          return;
+        }
+        setTimeout(() => setAttempt(attempt + 1), delay);
+      }}
+    />
+  );
 }
 
 export function ProcessingClient({ jobId }: { jobId: string }) {
@@ -184,8 +222,7 @@ export function ProcessingClient({ jobId }: { jobId: string }) {
                   return (
                     <div key={p.id} className="group relative overflow-hidden rounded-2xl bg-surface shadow-md">
                       {thumb ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={thumb} alt={p.sheet.name} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                        <ProductThumb src={thumb} alt={p.sheet.name} />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center bg-surface-container-low text-on-surface-variant">
                           <Icon name="error" className="text-error" />

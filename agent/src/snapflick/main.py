@@ -607,6 +607,7 @@ async def create_job(
 
 
 def _persist_and_notify(job: Job) -> None:
+    _sync_job_to_storage(job)
     STORE.save(job)
     _notify_change(job.id)
 
@@ -626,7 +627,6 @@ def _process(
             on_update=_persist_and_notify,
             per_image_backgrounds=per_image_backgrounds,
         )
-        _sync_job_to_storage(job)
     except Exception as exc:
         job.status = JobStatus.FAILED
         job.errors.append(str(exc))
