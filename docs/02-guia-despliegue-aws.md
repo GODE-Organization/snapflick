@@ -299,8 +299,25 @@ no da error: `Settings` ignora las variables desconocidas y el valor por defecto
 queda vigente en silencio — p. ej. `SNAPFLICK_MODEL_ID` no existe, el nombre real es
 `SNAPFLICK_GEMINI_MODEL_ID`).
 
+**`SNAPFLICK_CORS_ORIGINS` es obligatoria en producción desde que el backend usa sesiones
+anónimas por cookie** (`sf_session`, ver `main.py`). El default del código es
+`http://localhost:3000` — sin esta variable seteada a la URL real del frontend, el navegador
+rechaza la cookie de sesión (CORS con `allow_credentials=True` no acepta `*` como origen) y
+cada usuario pierde sus jobs entre requests. Ponla igual a la URL de Amplify Hosting (o al
+dominio propio del frontend si ya lo conectaste, sección "Dominio propio para el frontend").
+Acepta varios orígenes separados por coma si necesitas más de uno (ej. producción + preview).
+
+**⚠️ Si tu terminal es Git Bash (el que instala "Git para Windows") — confirmado en vivo:**
+Git Bash convierte automáticamente cualquier argumento que empiece con `/` a una ruta de
+Windows, así que `--health-check-path "/ping"` te llega a AWS como
+`"C:/Program Files/Git/ping"` — el servicio se crea, el ALB se factura, pero se queda
+atascado para siempre en `PROVISIONING` con
+`ValidationError: Health check path '...' must begin with a '/' character`. Anteponer
+`MSYS_NO_PATHCONV=1` al comando desactiva esa conversión solo para esa llamada (no hace falta
+en PowerShell/cmd.exe, solo en Git Bash/MSYS).
+
 ```bash
-aws ecs create-express-gateway-service \
+MSYS_NO_PATHCONV=1 aws ecs create-express-gateway-service \
   --execution-role-arn $EXEC_ROLE_ARN \
   --infrastructure-role-arn $INFRA_ROLE_ARN \
   --task-role-arn $TASK_ROLE_ARN \
@@ -313,7 +330,8 @@ aws ecs create-express-gateway-service \
         {"name": "SNAPFLICK_GEMINI_MODEL_ID", "value": "gemini-2.5-flash-lite"},
         {"name": "SNAPFLICK_S3_BUCKET", "value": "snapflick-<algo-unico>"},
         {"name": "SNAPFLICK_AWS_REGION", "value": "'"$REGION"'"},
-        {"name": "SNAPFLICK_LOG_LEVEL", "value": "INFO"}
+        {"name": "SNAPFLICK_LOG_LEVEL", "value": "INFO"},
+        {"name": "SNAPFLICK_CORS_ORIGINS", "value": "https://main.d3mxnoo9ebk8qj.amplifyapp.com"}
       ]
   }' \
   --service-name snapflick \
@@ -343,6 +361,13 @@ la flag y consulta el estado después con:
 aws ecs describe-express-gateway-service --service-arn <arn-que-guardaste> --region $REGION
 ```
 
+**¿Cuánto tarda?** Sin errores de configuración, entre **3 y 8 minutos** — AWS tiene que
+crear el ALB, el certificado TLS, el target group y arrancar la tarea de Fargate (descargar
+la imagen + levantar el contenedor). Si pasan más de 10-15 minutos sin llegar a `ACTIVE`, algo
+está mal (revisa el `Reason` de cada recurso en la salida de `--monitor-resources`, o corre el
+`describe` de arriba) — no es normal que tarde una media hora como con el error del health
+check.
+
 Antes de dar la URL por buena, caliéntala una vez — `/ping` responde al instante pero
 **no** carga nada (es el health check); el que precarga rembg y resuelve el proveedor de IA es
 `/warmup`:
@@ -350,8 +375,22 @@ Antes de dar la URL por buena, caliéntala una vez — `/ping` responde al insta
 curl -X POST https://<url-del-servicio>/warmup
 ```
 
-**⚠️ El ALB cobra por hora exista o no tráfico — leer la sección de costos antes de dejarlo
-corriendo.**
+**⚠️ El ALB cobra por hora exista o no tráfico.** Como el `service-name` de este proyecto es
+siempre `snapflick` en el cluster `default`, el ARN es predecible — no hace falta ir a buscarlo
+cada vez. Para apagar todo antes de dormir/entre sesiones (con `$REGION`/`$ACCOUNT` ya
+exportados desde la sección 0):
+```bash
+aws ecs delete-express-gateway-service \
+  --service-arn arn:aws:ecs:$REGION:$ACCOUNT:service/default/snapflick \
+  --region $REGION
+```
+Confirma que quedó borrado (no solo "aceptado") antes de cerrar la laptop:
+```bash
+aws ecs describe-express-gateway-service \
+  --service-arn arn:aws:ecs:$REGION:$ACCOUNT:service/default/snapflick \
+  --region $REGION --query 'service.status.statusCode' --output text
+```
+Tarda uno o dos minutos en pasar de `DRAINING` a `INACTIVE` (o a no encontrarse, "ServiceNotFoundException" — ambos significan que ya no cobra). Ver también la sección 3.1 más abajo.
 
 #### Dimensionar cpu/memoria
 
@@ -414,6 +453,49 @@ cobrando aunque el servicio esté en cero tareas (ver costos).
    consola de Amplify.
 4. Save and deploy. Cada push a `main` redespliega automáticamente.
 
+**⚠️ Trampa confirmada en vivo: el primer build puede "tener éxito" sin construir nada.**
+Al marcar la casilla de monorepo, Amplify agrega por su cuenta la variable de entorno
+`AMPLIFY_DIFF_DEPLOY=true` (optimización que solo reconstruye si detecta cambios dentro de
+`web/` respecto al despliegue anterior). En el **primer** despliegue no hay despliegue
+anterior con qué comparar, esa lógica concluye igual "sin cambios", y te deja con:
+```
+# No differences detected.
+## Skipping Frontend Build & Deploy, No changes detected...
+# The frontend build was skipped. Deployment will be skipped as well.
+```
+— el job queda en `SUCCEED` (porque no falló, simplemente no hizo nada) y la URL sirve la
+página de bienvenida por defecto de Amplify en vez de tu app. Es un comportamiento conocido de
+`AMPLIFY_DIFF_DEPLOY` en primeros despliegues (ver
+[issue relacionado en aws-amplify/amplify-hosting](https://github.com/aws-amplify/amplify-hosting/issues/3268)),
+no un error tuyo de configuración.
+
+**Arreglo:**
+1. Consola → tu app de Amplify → **App settings** → **Environment variables** → borra
+   `AMPLIFY_DIFF_DEPLOY` (o ponla en `false`). Deja `AMPLIFY_MONOREPO_APP_ROOT` y
+   `NEXT_PUBLIC_API_URL` como están.
+2. Dispara un build nuevo — **"Redeploy this version" no sirve** (repite la misma evaluación
+   cacheada); usa **"Start new deployment"**, o simplemente haz un nuevo `git push` a `main`.
+3. Confirma que ahora sí compiló (el log de build ya no debe decir "Skipping Frontend Build").
+
+### Dominio propio para el frontend (opcional)
+
+A diferencia del backend en ECS Express Mode (sección 5, mucho más manual), Amplify Hosting
+tiene soporte nativo para dominio personalizado — no hay que tocar ningún ALB a mano.
+
+1. Tu app de Amplify → pestaña **Hosting** (o el panel **"Pasar a producción"**) →
+   **Agregar dominio personalizado**.
+2. Escribe tu dominio o subdominio (p. ej. `app.tudominio.com` o `snapflick.tudominio.com`).
+3. Elige **"DNS provider is not Route 53"** (tu dominio vive en tu registrador externo) —
+   Amplify te da los registros CNAME de validación y de enrutamiento.
+4. Copia esos registros CNAME en el panel de tu registrador.
+5. Amplify emite el certificado SSL solo (gratis) y activa el dominio cuando el DNS valida —
+   puede tardar de minutos a un par de horas.
+
+Si el backend también tiene dominio propio (sección 5), usa un subdominio distinto para cada
+uno — p. ej. `app.tudominio.com` para el frontend y `api.tudominio.com` para el backend — y
+actualiza `NEXT_PUBLIC_API_URL` en Amplify para que apunte al subdominio del backend en vez de
+la URL `on.aws`.
+
 ---
 
 ## 3.1 Apagar todo entre sesiones de demo (ECS Express Mode)
@@ -448,6 +530,154 @@ Bórralo después de cada grabación y en cuanto termine el hackathon; volver a 
       actual (ver checklist previo, sección 0).
 - [ ] La alerta de presupuesto no se ha disparado.
 - [ ] CORS, límites de tamaño de archivo y timeouts están configurados razonablemente.
+
+---
+
+## 5. Dominio propio para el backend (opcional)
+
+La URL que te da Express Mode (`sn-xxxx.ecs.us-east-1.on.aws`) funciona perfecto pero no es
+memorable. Express Mode **no tiene un parámetro para dominio personalizado** — hay que
+configurar el ALB que ya creó por debajo, a mano. Confirmado contra la documentación oficial
+de AWS (["Adding a custom domain to your service"](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/express-service-advanced-customization.html#express-service-add-custom-domain));
+lo que sigue es esa misma guía adaptada a un dominio en un registrador externo (no Route 53),
+que es el caso típico de un dominio comprado en Namecheap/GoDaddy/etc.
+
+**⚠️ Léelo completo antes de empezar — hay una trampa con el apagado entre sesiones (sección
+3.1) que vale la pena decidir de antemano.** Ver el aviso al final de esta sección.
+
+### 5.1 Pedir el certificado ACM (en la misma región del ALB, `us-east-1`)
+
+```bash
+aws acm request-certificate \
+  --domain-name api.tudominio.com \
+  --validation-method DNS \
+  --region us-east-1
+```
+
+Guarda el ARN que devuelve, y pide el registro CNAME de validación:
+```bash
+export CERT_ARN=<arn-que-te-dio-el-comando-anterior>
+aws acm describe-certificate --certificate-arn $CERT_ARN --region us-east-1 \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+```
+Copia el `Name` y `Value` que imprime y créalos como registro **CNAME** en tu registrador
+(no en la consola de AWS — tu dominio no vive ahí). Cuando lo hayas puesto, espera a que
+valide (puede tardar de minutos a un par de horas):
+```bash
+aws acm wait certificate-validated --certificate-arn $CERT_ARN --region us-east-1
+```
+El comando se queda esperando hasta que el estado pase a `ISSUED`.
+
+### 5.2 Editar la regla del listener y agregar el certificado (por consola)
+
+Este paso es de consola porque así lo documenta AWS oficialmente — edita una regla existente
+con condiciones OR, que es más seguro hacer con el asistente visual que a ciegas por CLI:
+
+1. Consola → **ECS** → **Clusters** → `default` → pestaña **Services** → `snapflick` →
+   pestaña **Resources** → selecciona la **listener rule**.
+2. **Action** → **Edit Rule**.
+3. Copia el valor actual de la condición **Host header** (tu URL `on.aws`) — anótalo, lo
+   necesitas en el siguiente paso.
+4. **Remove** la regla (Express Mode solo permite una regla de cada tipo, así que hay que
+   quitarla para poder editar las condiciones).
+5. Agrega una condición tipo **Host header**, pega de nuevo tu URL `on.aws` como valor.
+6. Click **Add OR condition value** → escribe tu dominio propio (`api.tudominio.com`).
+7. **Next** → **Save changes**.
+8. Ve a la pestaña **Certificates** del listener del ALB → **Add certificate** → selecciona
+   el certificado ACM que ya quedó `ISSUED` en el paso 5.1.
+
+### 5.3 Apuntar tu dominio al ALB
+
+En tu registrador, crea un **CNAME**:
+```
+api.tudominio.com  →  ecs-express-gateway-alb-xxxx.us-east-1.elb.amazonaws.com
+```
+(el nombre del ALB, no la URL `on.aws` — lo ves en la consola de EC2 → Load Balancers, o con
+`aws elbv2 describe-load-balancers --region us-east-1 --query 'LoadBalancers[].DNSName'`).
+Después de unos minutos de propagación, `https://api.tudominio.com/ping` debería responder
+igual que la URL `on.aws`.
+
+### ⚠️ La trampa: esto no sobrevive un `delete` + `create`
+
+`delete-express-gateway-service` borra el ALB completo — con él, la regla y el certificado
+que acabas de agregar a mano. Si vuelves a crear el servicio, Express Mode arma un ALB
+**nuevo** desde cero, sin tu dominio conectado. El certificado ACM del paso 5.1 sí sobrevive
+(es un recurso aparte) y se reutiliza, pero los pasos 5.2 y 5.3 (rehacer la regla, re-adjuntar
+el certificado) hay que repetirlos cada vez.
+
+Dos caminos, elige uno a propósito:
+- **Quieres una URL de dominio propio estable** (para dar la URL final a los jueces, por
+  ejemplo): deja el servicio corriendo sin borrarlo entre sesiones y asume el costo fijo del
+  ALB (~USD 16-18/mes, ver "Costos estimados" abajo).
+- **Prefieres seguir apagando entre sesiones** (sección 3.1) para no pagar de más: acepta que
+  cada vez que recrees el servicio hay que repetir 5.2 y 5.3 (5-10 minutos, sin volver a pedir
+  el certificado).
+
+Además, AWS advierte explícitamente que **Express Mode no protege tus cambios manuales de
+conflictos futuros**: si más adelante corres `update-express-gateway-service` tocando algo
+que tenga que ver con el listener o el health check, podría pisar la regla o el certificado
+que agregaste a mano. Después de cualquier `update`, vale la pena volver a probar
+`https://api.tudominio.com/ping` para confirmar que el dominio sigue funcionando.
+
+---
+
+## 6. Redesplegar (ciclo normal, cuando ya hay código nuevo en la rama)
+
+**Frontend:** nada que hacer a mano — cada `git push` a `main` dispara el build de Amplify
+solo (webhook ya conectado desde la sección "Frontend en Amplify Hosting").
+
+**Backend: siempre manual.** ECS Express Mode no vigila el tag `:latest` de ECR — aunque subas
+una imagen nueva, las tareas que ya están corriendo no se enteran solas. Hay que:
+
+### 6.1 Reconstruir y publicar la imagen
+```bash
+infra/scripts/deploy.sh
+```
+(o el `docker buildx build --platform linux/amd64,linux/arm64 ... --push ./agent` de la
+sección 2.3, a mano).
+
+### 6.2 Actualizar el servicio para que tome la imagen nueva
+
+```bash
+aws ecs update-express-gateway-service \
+  --service-arn arn:aws:ecs:$REGION:$ACCOUNT:service/default/snapflick \
+  --primary-container '{
+      "image": "'"$ACCOUNT"'.dkr.ecr.'"$REGION"'.amazonaws.com/snapflick:latest",
+      "containerPort": 8080,
+      "environment": [
+        {"name": "SNAPFLICK_MODEL_PROVIDER", "value": "gemini"},
+        {"name": "SNAPFLICK_GEMINI_API_KEY", "value": "TU_API_KEY"},
+        {"name": "SNAPFLICK_GEMINI_MODEL_ID", "value": "gemini-flash-latest"},
+        {"name": "SNAPFLICK_S3_BUCKET", "value": "snapflick-gode-2026"},
+        {"name": "SNAPFLICK_AWS_REGION", "value": "'"$REGION"'"},
+        {"name": "SNAPFLICK_LOG_LEVEL", "value": "INFO"}
+      ]
+  }' \
+  --region $REGION \
+  --monitor-resources
+```
+
+**⚠️ La lista `environment` se reemplaza completa, no se fusiona con la anterior.** Si omites
+una variable que ya estaba puesta, esa variable desaparece del contenedor en el próximo
+despliegue — no queda "la de antes" por defecto. Cada vez que actualices, copia la lista
+completa vigente (revísala con el `describe` de abajo si no la tienes a mano) y agrégale o
+quítale lo que corresponda; nunca mandes solo la variable nueva sola.
+
+**Si necesitas agregar una variable nueva** (por ejemplo `SNAPFLICK_CORS_ORIGINS` cuando el
+backend empiece a depender de cookies de sesión y CORS deje de poder ser `*`), es el mismo
+comando: la lista completa de `environment` con la variable nueva añadida.
+
+Para ver qué está corriendo *ahora mismo* antes de armar el `environment` completo:
+```bash
+aws ecs describe-express-gateway-service \
+  --service-arn arn:aws:ecs:$REGION:$ACCOUNT:service/default/snapflick \
+  --region $REGION \
+  --query 'service.activeConfigurations[0].primaryContainer.environment'
+```
+
+### 6.3 Confirmar y calentar
+Igual que en el primer despliegue (sección "Paso 1"): espera a `ACTIVE`/`SUCCESSFUL` y llama
+a `/warmup` antes de dar la URL por buena.
 
 ## Costos estimados
 
